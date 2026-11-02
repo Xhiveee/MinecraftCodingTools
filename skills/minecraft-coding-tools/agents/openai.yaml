@@ -1,0 +1,3 @@
+interface:
+  display_name: "MinecraftCodingTools"
+  short_description: "Minecraft mod and plugin development with MCP"

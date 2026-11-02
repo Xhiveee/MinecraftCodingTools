@@ -1,0 +1,128 @@
+# FFN docs_search sources. Each source is an official repository whose Markdown is the source of an official site.
+# FFN downloads it (GitHub zip archive, or the git tree + raw files for large repos), caches it, splits pages into
+# heading sections and maps every file back to its public page URL. Result URLs are HEAD/GET-checked before they are
+# shown as verified. Add or override sources in <FFN_PROFILES_DIR>/docs/*.yaml (same id replaces a built-in one).
+#
+# files[].match is a regex on the repository path; `$1..$9` refer to its groups in `version` and `url`.
+# version: "latest" (newest docs, used for versions newer than every numbered set), a version ("1.21.1"), or a
+#          wildcard ("1.21.x" matches 1.21, 1.21.1 ...). versionFromContent: regex whose group 1 is the version.
+# topics: [mixin] tags every page of a source; files[].topics tags only the pages of that rule. docs_search topic=… filters.
+# versioned: false for docs that are not tied to Minecraft versions (Mixin wikis): always searched, version "any".
+# Fetch with exactly one of: zip, githubTree, git (shallow clone, e.g. a GitHub wiki), dokuwiki (sitemap + export_raw).
+# {page:url} is {page} with percent-encoded path segments (GitHub wiki names can contain ? , ').
+# kind: docs | primer (vanilla+loader changes for porting TO that version) | changelog (release announcements).
+# url: page template; `{page}` is the path without extension and without a trailing /index (or README).
+sources:
+  - id: neoforge-docs
+    title: NeoForge documentation
+    loaders: [neoforge]
+    zip: https://codeload.github.com/neoforged/Documentation/zip/refs/heads/main
+    files:
+      - match: '^docs/(.+)\.mdx?$'
+        version: latest
+        url: 'https://docs.neoforged.net/docs/{page}'
+      - match: '^versioned_docs/version-([^/]+)/(.+)\.mdx?$'
+        version: '$1'
+        url: 'https://docs.neoforged.net/docs/$1/{page}'
+
+  - id: neoforge-primers
+    title: NeoForged version primers (vanilla + NeoForge changes per Minecraft version)
+    loaders: [fabric, forge, neoforge]
+    kind: primer
+    zip: https://codeload.github.com/neoforged/.github/zip/refs/heads/main
+    files:
+      - match: '^primers/([0-9][^/]*)/index\.md$'
+        version: '$1'
+        url: 'https://docs.neoforged.net/primer/docs/$1/'
+
+  - id: fabric-docs
+    title: Fabric documentation
+    loaders: [fabric]
+    githubTree: { repo: FabricMC/fabric-docs, branch: main }
+    files:
+      # mixin pages first (first matching rule wins) so they carry topic: mixin
+      - match: '^develop/(mixins/.+)\.md$'
+        version: latest
+        url: 'https://docs.fabricmc.net/develop/{page}'
+        topics: [mixin]
+      - match: '^versions/([^/]+)/develop/(mixins/.+)\.md$'
+        version: '$1'
+        url: 'https://docs.fabricmc.net/$1/develop/{page}'
+        fallbackUrl: 'https://github.com/FabricMC/fabric-docs/blob/main/versions/$1/develop/$2.md'
+        topics: [mixin]
+      - match: '^develop/(.+)\.md$'
+        version: latest
+        url: 'https://docs.fabricmc.net/develop/{page}'
+      - match: '^versions/([^/]+)/develop/(.+)\.md$'
+        version: '$1'
+        url: 'https://docs.fabricmc.net/$1/develop/{page}'
+        fallbackUrl: 'https://github.com/FabricMC/fabric-docs/blob/main/versions/$1/develop/$2.md'
+
+  - id: fabric-blog
+    title: Fabric blog (per-version porting announcements)
+    loaders: [fabric]
+    kind: changelog
+    githubTree: { repo: FabricMC/fabricmc.net, branch: main }
+    files:
+      - match: '^_posts/([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})-(.+)\.md$'
+        versionFromContent: 'title:\s*Fabric for Minecraft ([0-9][0-9.]*)'
+        url: 'https://fabricmc.net/$1/{pad2:$2}/{pad2:$3}/$4.html'
+
+  - id: forge-docs-1.21.x
+    title: Minecraft Forge documentation (1.21.x)
+    loaders: [forge]
+    zip: https://codeload.github.com/MinecraftForge/Documentation/zip/refs/heads/1.21.x
+    files:
+      - match: '^docs/(.+)\.md$'
+        version: '1.21.x'
+        url: 'https://docs.minecraftforge.net/en/1.21.x/{page}/'
+  - id: forge-docs-1.20.x
+    title: Minecraft Forge documentation (1.20.x)
+    loaders: [forge]
+    zip: https://codeload.github.com/MinecraftForge/Documentation/zip/refs/heads/1.20.x
+    files:
+      - match: '^docs/(.+)\.md$'
+        version: '1.20.x'
+        url: 'https://docs.minecraftforge.net/en/1.20.x/{page}/'
+  - id: forge-docs-1.20.1
+    title: Minecraft Forge documentation (1.20.1)
+    loaders: [forge, neoforge]
+    zip: https://codeload.github.com/MinecraftForge/Documentation/zip/refs/heads/1.20.1
+    files:
+      - match: '^docs/(.+)\.md$'
+        version: '1.20.1'
+        url: 'https://docs.minecraftforge.net/en/1.20.1/{page}/'
+
+  # ---------------------------------------------------------------- Mixin (topic: mixin; not Minecraft-version-specific)
+  - id: mixin-wiki
+    title: SpongePowered Mixin wiki
+    loaders: [fabric, forge, neoforge]
+    topics: [mixin]
+    versioned: false
+    titleFromName: true
+    git: { url: 'https://github.com/SpongePowered/Mixin.wiki.git' }
+    files:
+      - match: '^([^_/][^/]*)\.md$'
+        url: 'https://github.com/SpongePowered/Mixin/wiki/{page:url}'
+
+  - id: mixinextras-wiki
+    title: MixinExtras wiki
+    loaders: [fabric, forge, neoforge]
+    topics: [mixin]
+    versioned: false
+    titleFromName: true
+    git: { url: 'https://github.com/LlamaLad7/MixinExtras.wiki.git' }
+    files:
+      - match: '^([^_/][^/]*)\.md$'
+        url: 'https://github.com/LlamaLad7/MixinExtras/wiki/{page:url}'
+
+  - id: fabric-wiki-mixin
+    title: Fabric wiki (Mixin tutorials)
+    loaders: [fabric]
+    topics: [mixin]
+    versioned: false
+    dokuwiki: { base: 'https://wiki.fabricmc.net' }
+    files:
+      # English tutorial pages only (no drafts:, no translations such as ru:tutorial:)
+      - match: '^tutorial:(mixin[a-z0-9_]*)$'
+        url: 'https://wiki.fabricmc.net/tutorial:{page}'

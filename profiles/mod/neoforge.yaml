@@ -1,0 +1,118 @@
+# FFN version profile: NeoForge
+#
+# NeoForge's own version number encodes the Minecraft version, so FFN derives
+# MC <-> NeoForge compatibility programmatically (see src/sources/neoforge.ts):
+#   21.1.x      -> 1.21.1   (A.B.C  -> 1.A.B, B=0 -> 1.A)
+#   26.1.0.40   -> 26.1     (Y.D.H.B -> Y.D[.H])
+#   1.20.1 only -> artifact net.neoforged:forge (1.20.1-47.1.x)
+loader: neoforge
+minVersion: "1.20.1"
+testedUpTo: "26.3"
+rules:
+  # Base rule. Later rules override what changed, so 1.20.1-specific values below are
+  # replaced from 1.20.2 on (buildSystem, plugin, mixin wiring, ...).
+  - since: "1.20.1"
+    description: NeoForge 1.20.1 (a Forge 47.1 fork) via ModDevGradle legacyforge
+    verified: ["1.20.1"]
+    set:
+      java: auto
+      gradle: { version: "8.14.5" }
+      buildSystem: moddevgradle-legacy
+      plugin:
+        id: net.neoforged.moddev.legacyforge
+        version: latest
+        metadataUrl: https://maven.neoforged.net/releases/net/neoforged/moddev/legacyforge/net.neoforged.moddev.legacyforge.gradle.plugin/maven-metadata.xml
+      loaderArtifact: net.neoforged:forge
+      metadata:
+        file: META-INF/mods.toml
+        format: mods.toml
+        loaderVersion: forge-major
+        loaderModId: forge
+        dependencyStyle: mandatory
+      mappings:
+        default: mojmap
+        supported: [mojmap, parchment]
+      mixin:
+        registration: manifest
+        devRunArg: false # MDG's `mixin { config ... }` block wires dev runs
+        refmap: true # runtime uses SRG names
+        annotationProcessor: org.spongepowered:mixin:0.8.5:processor
+        compatibilityLevel: JAVA_17
+        maxCompatibilityLevel: JAVA_18 # Mixin 0.8.5
+        mixinExtras:
+          bundled: false
+          note: Not bundled on 1.20.1. Add io.github.llamalad7:mixinextras-forge via jarJar and call MixinExtrasBootstrap.init().
+      packMeta: { kind: pack_format }
+      references:
+        - https://github.com/neoforged/MDK/tree/1.20.1-legacy
+        - https://github.com/neoforged/ModDevGradle/blob/main/LEGACY.md
+      notes:
+        - NeoForge for 1.20.1 is frozen at 47.1.x; most 1.20.1 mods target MinecraftForge instead (loader=forge).
+
+  - since: "1.20.2"
+    description: NeoForge 20.2+ via ModDevGradle (official 1.20.2 MDK uses NeoGradle 7; both work)
+    verified: ["1.20.2"] # official MDK + a mixin compiled and validated; Mixin libs from the userdev config
+    set:
+      gradle: { version: "9.2.1" }
+      buildSystem: moddevgradle
+      plugin:
+        id: net.neoforged.moddev
+        version: latest
+        metadataUrl: https://maven.neoforged.net/releases/net/neoforged/moddev/net.neoforged.moddev.gradle.plugin/maven-metadata.xml
+      loaderArtifact: net.neoforged:neoforge
+      metadata:
+        file: META-INF/mods.toml
+        format: mods.toml
+        loaderVersion: "[1,)"
+        loaderModId: neoforge
+        dependencyStyle: type
+      mixin:
+        registration: mods.toml # [[mixins]] config="<modid>.mixins.json"
+        devRunArg: false
+        refmap: false # Mojang names at runtime from 20.2 on (the universal jar contains no SRG names)
+        annotationProcessor: null
+        compatibilityLevel: auto
+        maxCompatibilityLevel: JAVA_18 # org.spongepowered:mixin 0.8.5
+        mixinExtras:
+          bundled: true
+          note: NeoForge bundles MixinExtras since 20.2.84 (0.3.x); on older 20.2 builds add it via jarJar.
+      packMeta: { kind: none }
+      references:
+        - https://github.com/NeoForgeMDKs
+        - https://docs.neoforged.net/
+      notes: []
+
+  - since: "1.20.4"
+    verified: ["1.20.4"] # official MDK (ModDevGradle) + a mixin compiled and validated
+    set:
+      mixin:
+        maxCompatibilityLevel: JAVA_22 # net.fabricmc:sponge-mixin 0.13.x (20.4-20.6), 0.14.0 (21.0)
+        mixinExtras:
+          bundled: true
+          note: NeoForge ships MixinExtras.
+
+  - since: "1.20.5"
+    description: neoforge.mods.toml replaces mods.toml
+    set:
+      metadata:
+        file: META-INF/neoforge.mods.toml
+        format: neoforge.mods.toml
+
+  - since: "1.21.1"
+    verified: ["1.21.1"]
+    set:
+      mixin:
+        maxCompatibilityLevel: JAVA_25 # net.fabricmc:sponge-mixin 0.16.4 (21.1), 0.17.4 (26.x)
+
+  - since: "1.21.11"
+    description: loaderVersion no longer required in neoforge.mods.toml
+    set:
+      metadata: { loaderVersion: null }
+
+  - when: { obfuscated: false }
+    description: Unobfuscated Minecraft (26.1+) — no Parchment needed
+    verified: ["26.3"]
+    set:
+      mappings:
+        default: mojmap
+        supported: [mojmap]
