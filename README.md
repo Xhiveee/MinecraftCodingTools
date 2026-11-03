@@ -39,6 +39,8 @@ Tools accept `{"request":{"target":"mod"}}` or `{"request":{"target":"plugin"}}`
 
 Build and classpath tools execute project build scripts. Kotlin analysis is static; dependency discovery covers compile classpaths. Archive analysis works one JAR at a time.
 
+Project-local state (logs, classpath cache and resolver scripts) is stored in `.mct/`. Add it to your mod/plugin project's `.gitignore`. Legacy `.ffn/project.json` remains readable; `.mct/project.json` takes priority. Old `.ffn/` and `.bsp/` caches are not migrated automatically.
+
 ## Development
 
 ```sh
@@ -47,6 +49,6 @@ npm test
 npm run release
 ```
 
-Release output: `releases/MinecraftCodingTools-v0.1.1.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
+Release output: `releases/MinecraftCodingTools-v0.1.3.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
 
 MIT · Based on [FFN](https://github.com/Xhiveee/ffn) and [BSP](https://github.com/Xhiveee/bsp).

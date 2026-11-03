@@ -79,7 +79,7 @@ async function requiredJvm(services: Services, info: ProjectInfo, warnings: stri
     const jvm = Math.max(profile.java, minJvm);
     return cap(jvm, `${info.loader} ${info.mcVersion} targets Java ${profile.java}${minJvm > profile.java ? ` and its Gradle plugin needs JDK ${minJvm} to run` : ""}.`);
   } catch (e) {
-    if (info.gradleJvm) return cap(info.gradleJvm, `From .ffn/project.json (profile lookup failed: ${(e as Error).message}).`);
+    if (info.gradleJvm) return cap(info.gradleJvm, `From project metadata (profile lookup failed: ${(e as Error).message}).`);
     warnings.push(`Could not resolve the profile (${(e as Error).message}); assuming JDK 21.`);
     return cap(21, "Fallback.");
   }
@@ -105,8 +105,8 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
     if (!choice.jdk) return { error: choice.missing! };
     jdk = choice.jdk;
   }
-  const ffnDir = path.join(root, ".ffn");
-  await mkdir(ffnDir, { recursive: true });
+  const stateDir = path.join(root, ".mct");
+  await mkdir(stateDir, { recursive: true });
   const toolchainPaths = all.filter((j) => j.isJdk).map((j) => j.home).join(",");
   const args = [
     ...tasks,
@@ -122,7 +122,7 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
     ...o.env,
   };
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const logFile = path.join(ffnDir, "logs", `${o.logName}-${stamp}.log`);
+  const logFile = path.join(stateDir, "logs", `${o.logName}-${stamp}.log`);
   const result = await runProcess({
     command: wrapper,
     args,

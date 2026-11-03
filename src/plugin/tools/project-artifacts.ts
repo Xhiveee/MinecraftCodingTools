@@ -32,7 +32,7 @@ export async function listProjectArtifacts(services: Services, a: A) {
   const info = await readProjectInfo(a.projectDir).catch((e: Error) => e);
   if (info instanceof Error) return fail(info.message);
   const root = info.rootDir;
-  const base = path.join(root, ".bsp", "classpath");
+  const base = path.join(root, ".mct", "classpath");
   await mkdir(base, { recursive: true });
   const work = await mkdtemp(path.join(base, "run-"));
   const logFile = path.join(work, "resolve.log");

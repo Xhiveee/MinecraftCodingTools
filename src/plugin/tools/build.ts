@@ -143,7 +143,7 @@ export async function build(services: Services, a: A) {
     if (paths) args.push(`-Porg.gradle.java.installations.paths=${paths}`);
   }
   args.push(...(a.args ?? []));
-  const logFile = path.join(root, ".bsp", "logs", `build-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
+  const logFile = path.join(root, ".mct", "logs", `build-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
   await mkdir(path.dirname(logFile), { recursive: true });
   const r = await runProcess({
     command: cmd,

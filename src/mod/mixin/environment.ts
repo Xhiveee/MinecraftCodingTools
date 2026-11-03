@@ -115,7 +115,7 @@ export async function inspectMixinEnvironment(project: ProjectInfo, data: Gradle
 
 export async function resolveMixinEnvironment(services: Services, project: ProjectInfo, registrationKind?: RegistrationKind): Promise<MixinEnvironment> {
   const root = project.rootDir ?? project.dir;
-  const cache = path.join(root, ".ffn");
+  const cache = path.join(root, ".mct");
   await mkdir(cache, { recursive: true });
   const temp = await mkdtemp(path.join(cache, "mixin-environment-"));
   try {

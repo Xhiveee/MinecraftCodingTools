@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Loader, Mappings } from "../profiles/schema.js";
 
-/** What FFN needs to know about a mod project. Read from .ffn/project.json, else inferred from build files. */
+/** Mod project metadata from .mct/project.json or the project's build files. */
 export interface ProjectInfo {
   dir: string;
   loader: Loader;
@@ -12,7 +12,7 @@ export interface ProjectInfo {
   modId?: string;
   /** e.g. yarn build, parchment version, when declared. */
   mappingsVersion?: string;
-  source: "ffn" | "inferred";
+  source: "mct" | "ffn" | "inferred";
   /** How loader / version / mappings were determined (file and key), for messages. */
   detectedFrom?: string[];
   /** Java version the mod targets / Gradle must run on, if FFN generated it. */
@@ -393,15 +393,16 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
     ...(isRoot && subprojects.length ? { subprojects } : {}),
   };
 
-  const ffn = await readText(path.join(dir, ".ffn", "project.json"));
-  if (ffn) {
-    const j = JSON.parse(ffn) as {
+  const metadata = await readText(path.join(dir, ".mct", "project.json"));
+  const legacyMetadata = metadata === undefined ? await readText(path.join(dir, ".ffn", "project.json")) : undefined;
+  if (metadata !== undefined || legacyMetadata !== undefined) {
+    const j = JSON.parse((metadata ?? legacyMetadata)!) as {
       loader: Loader; mcVersion: string; mappings: Mappings; modId?: string; profile?: { java?: number; gradleJvm?: number };
     };
     return {
       ...base, loader: j.loader, mcVersion: props.minecraft_version ?? j.mcVersion, mappings: j.mappings, modId: j.modId,
       mappingsVersion: props.yarn_mappings ?? props.parchment_mappings_version,
-      source: "ffn", java: j.profile?.java, gradleJvm: j.profile?.gradleJvm, classpathProject: gradlePath,
+      source: metadata !== undefined ? "mct" : "ffn", java: j.profile?.java, gradleJvm: j.profile?.gradleJvm, classpathProject: gradlePath,
     };
   }
 

@@ -323,7 +323,7 @@ export class IndexService {
     const root = project.rootDir ?? project.dir;
     const want = project.classpathProject ?? ":";
     const pick = (byProject: Record<string, string[]>) => byProject[want] ?? byProject[":"] ?? [...new Set(Object.values(byProject).flat())];
-    const cacheFile = path.join(root, ".ffn", "classpath.json");
+    const cacheFile = path.join(root, ".mct", "classpath.json");
     const subs = project.subprojects ?? (root !== project.dir ? (await readProjectInfo(root)).subprojects : undefined) ?? [];
     const dirs = [root, ...subs.map((x) => x.dir)];
     const stamp = dirs
@@ -341,7 +341,7 @@ export class IndexService {
     }
     onProgress?.("Asking Gradle for the project's compile classpath (first time can take minutes)…");
     const { runGradle } = await import("../tools/gradle.js");
-    const init = path.join(root, ".ffn", "ffn-classpath.gradle");
+    const init = path.join(root, ".mct", "mct-classpath.gradle");
     await mkdir(path.dirname(init), { recursive: true });
     await writeFile(init, CLASSPATH_INIT);
     const run = await runGradle(this.services, {
