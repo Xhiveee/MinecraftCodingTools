@@ -47,6 +47,6 @@ npm test
 npm run release
 ```
 
-Release output: `releases/MinecraftCodingTools-v0.1.0.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
+Release output: `releases/MinecraftCodingTools-v0.1.1.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
 
 MIT · Based on [FFN](https://github.com/Xhiveee/ffn) and [BSP](https://github.com/Xhiveee/bsp).

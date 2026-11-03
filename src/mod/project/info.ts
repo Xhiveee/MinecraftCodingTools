@@ -71,6 +71,8 @@ const PLATFORM_NAMES: [RegExp, Loader | "common"][] = [
 
 /** Which platform a subproject targets: Architectury `architectury { fabric() }`, loader plugins, else its name. */
 export async function subprojectPlatform(dir: string, name: string): Promise<Loader | "common" | undefined> {
+  const props = parseProperties((await readText(path.join(dir, "gradle.properties"))) ?? "");
+  if (["fabric", "forge", "neoforge"].includes(props["loom.platform"] ?? "")) return props["loom.platform"] as Loader;
   const build = stripComments((await readText(path.join(dir, "build.gradle"))) ?? (await readText(path.join(dir, "build.gradle.kts"))) ?? "");
   const arch = /architectury\s*\{([^}]*)\}/.exec(build)?.[1] ?? "";
   if (/\bcommon\s*\(/.test(arch)) return "common";
@@ -90,6 +92,19 @@ export function gradlePathOf(rootDir: string, dir: string, p: typeof path.posix 
   return `:${p.relative(rootDir, dir).split(/[\\/]/).filter(Boolean).join(":")}`;
 }
 
+const stonecutterVersion = (name: string) => /^(\d+\.\d+(?:\.\d+)?)(?:-(?:fabric|forge|neoforge))?$/.exec(name)?.[1];
+
+async function settingsProjects(root: string, settings: string, props: Record<string, string>): Promise<{ path: string; dir: string }[]> {
+  const projects = parseSettingsIncludes(settings, props);
+  if (!/dev\.kikugie\.stonecutter/.test(stripComments(settings))) return projects;
+  const versions = await readdir(path.join(root, "versions"), { withFileTypes: true }).catch(() => []);
+  for (const entry of versions) {
+    if (!entry.isDirectory() || !stonecutterVersion(entry.name)) continue;
+    if (!projects.some((p) => p.path === `:${entry.name}`)) projects.push({ path: `:${entry.name}`, dir: path.join("versions", entry.name) });
+  }
+  return projects;
+}
+
 /** The Gradle root containing dir: the nearest ancestor (max 3 up) whose settings.gradle includes dir. */
 export async function findGradleRoot(dir: string): Promise<string> {
   let cur = dir;
@@ -99,7 +114,7 @@ export async function findGradleRoot(dir: string): Promise<string> {
     const settings = (await readText(path.join(up, "settings.gradle"))) ?? (await readText(path.join(up, "settings.gradle.kts")));
     if (settings) {
       const props = parseProperties((await readText(path.join(up, "gradle.properties"))) ?? "");
-      if (parseSettingsIncludes(settings, props).some((s) => path.resolve(up, s.dir) === dir)) return up;
+      if ((await settingsProjects(up, settings, props)).some((s) => path.resolve(up, s.dir) === dir)) return up;
     }
     cur = up;
   }
@@ -255,9 +270,12 @@ interface Detected {
  * fabric.mod.json / mods.toml). No FFN-specific file is needed.
  */
 export async function detectProject(dir: string, props: Record<string, string>, mixinConfigs: string[], resourceRoots: string[], rootDir = dir, platform?: Loader): Promise<Detected> {
-  const buildFile = ["build.gradle", "build.gradle.kts"].find((f) => existsSync(path.join(dir, f)));
-  const build = stripComments((buildFile && (await readText(path.join(dir, buildFile)))) ?? "");
   const settings = stripComments((await readText(path.join(rootDir, "settings.gradle"))) ?? (await readText(path.join(rootDir, "settings.gradle.kts"))) ?? "");
+  const stonecutter = rootDir !== dir && path.dirname(dir) === path.join(rootDir, "versions") && /dev\.kikugie\.stonecutter/.test(settings);
+  const centralScript = /centralScript\s*=\s*["']([^"']+)["']/.exec(settings)?.[1] ?? "build.gradle.kts";
+  const buildFile = ["build.gradle", "build.gradle.kts"].find((f) => existsSync(path.join(dir, f)))
+    ?? (stonecutter ? path.relative(dir, path.join(rootDir, centralScript)) : undefined);
+  const build = stripComments((buildFile && (await readText(path.join(dir, buildFile)))) ?? "");
   const all = rootDir === dir ? `${build}\n${settings}` : build; // a subproject's plugins are in its own build file
   const from: string[] = [];
   const resFile = async (rel: string) => {
@@ -276,6 +294,7 @@ export async function detectProject(dir: string, props: Record<string, string>, 
 
   let loader: Loader | undefined;
   if (platform) (loader = platform), from.push(`subproject platform: ${platform}`);
+  else if (["fabric", "forge", "neoforge"].includes(props["loom.platform"] ?? "")) (loader = props["loom.platform"] as Loader), from.push(`gradle.properties: loom.platform=${loader}`);
   else if (/fabric-loom|fabricmc\.loom/.test(all)) (loader = "fabric"), from.push(`${buildFile}: Loom plugin`);
   else if (/net\.neoforged\.moddev\.legacyforge/.test(all)) {
     // ModDevGradle "legacyforge" builds both Forge 1.20.1 MDKs and NeoForge's 1.20.1 (net.neoforged:forge)
@@ -289,6 +308,10 @@ export async function detectProject(dir: string, props: Record<string, string>, 
 
   let mcVersion = literal(props.minecraft_version) ?? literal(props.mc_version);
   if (mcVersion) from.push(`gradle.properties: ${props.minecraft_version ? "minecraft_version" : "mc_version"}=${mcVersion}`);
+  if (!mcVersion && stonecutter) {
+    mcVersion = stonecutterVersion(path.basename(dir));
+    if (mcVersion) from.push(`Stonecutter module ${path.basename(dir)}: Minecraft ${mcVersion}`);
+  }
   if (!mcVersion) {
     const coord = /com\.mojang:minecraft:([^"'\s)]+)/.exec(build)?.[1];
     mcVersion = literal(coord);
@@ -305,7 +328,7 @@ export async function detectProject(dir: string, props: Record<string, string>, 
   }
   if (!loader || !mcVersion) {
     throw new Error(
-      `Could not determine ${!loader ? "the loader" : "the Minecraft version"} of ${dir}. FFN reads it from the project itself: ` +
+      `Could not determine ${!loader ? "the loader" : "the Minecraft version"} of ${dir}. MinecraftCodingTools reads it from the project itself: ` +
         "gradle.properties (minecraft_version, neo_version / forge_version) and the Gradle plugin in build.gradle(.kts) " +
         "(Loom, ModDevGradle, NeoGradle, ForgeGradle), as in the official MDKs and the Fabric example mod.",
     );
@@ -324,7 +347,7 @@ export async function detectProject(dir: string, props: Record<string, string>, 
   } catch {
     /* templated fabric.mod.json */
   }
-  const modId = literal(props.mod_id) ?? jsonId ?? tomlId ?? mixinConfigs.map((c) => /([\w-]+)\.mixins\.json$/.exec(c)?.[1]).find(Boolean) ?? literal(props.archives_base_name);
+  const modId = literal(props.mod_id) ?? literal(props.modId) ?? jsonId ?? tomlId ?? mixinConfigs.map((c) => /([\w-]+)\.mixins\.json$/.exec(c)?.[1]).find(Boolean) ?? literal(props.archives_base_name);
   return {
     loader, mcVersion, mappings, modId,
     mappingsVersion: props.yarn_mappings ?? props.parchment_mappings_version ?? props.parchment_version ?? props["neogradle.subsystems.parchment.mappingsVersion"] ?? props.mapping_version,
@@ -342,14 +365,15 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
   const props = rootDir === dir ? rootProps : { ...rootProps, ...parseProperties((await readText(path.join(dir, "gradle.properties"))) ?? "") };
   const settings = (await readText(path.join(rootDir, "settings.gradle"))) ?? (await readText(path.join(rootDir, "settings.gradle.kts"))) ?? "";
   const subprojects: SubprojectInfo[] = [];
-  for (const inc of parseSettingsIncludes(settings, rootProps)) {
+  for (const inc of await settingsProjects(rootDir, settings, rootProps)) {
     const d = path.resolve(rootDir, inc.dir);
     if (existsSync(d)) subprojects.push({ path: inc.path, dir: d, platform: await subprojectPlatform(d, inc.path.split(":").pop()!) });
   }
   const isRoot = dir === rootDir;
   const self = subprojects.find((x) => x.dir === dir);
   const gradlePath = isRoot ? ":" : (self?.path ?? gradlePathOf(rootDir, dir));
-  const sets = await sourceSets(dir, isRoot ? subprojects.map((x) => x.dir) : [], rootDir);
+  const stonecutterModule = !isRoot && /dev\.kikugie\.stonecutter/.test(stripComments(settings)) && path.dirname(dir) === path.join(rootDir, "versions");
+  const sets = await sourceSets(dir, isRoot ? subprojects.map((x) => x.dir) : stonecutterModule ? [rootDir] : [], rootDir);
   const mixinConfigs = (await Promise.all(sets.resources.map((r) => findFiles(r, (n) => /mixins.*\.json$|\.mixins\.json$/.test(n), 2)))).flat();
   const gradleFiles = [
     ...[...new Set([dir, rootDir, ...(isRoot ? subprojects.map((x) => x.dir) : [])])].flatMap((d) => ["build.gradle", "build.gradle.kts"].map((f) => path.join(d, f))),
@@ -357,7 +381,7 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
   ].filter(existsSync);
   const buildScripts = (await Promise.all(gradleFiles.map((f) => readText(f)))).filter((x): x is string => !!x);
   const catalog = await readText(path.join(rootDir, "gradle", "libs.versions.toml"));
-  let kotlinPluginVersion = buildScripts.map(declaredKotlinVersion).find(Boolean);
+  let kotlinPluginVersion = buildScripts.map(declaredKotlinVersion).find(Boolean) ?? literal(props.kotlin_version) ?? literal(props.kotlinVersion);
   if (!kotlinPluginVersion) {
     kotlinPluginVersion = catalog && /^\s*kotlin\s*=\s*["']([^"']+)["']/m.exec(catalog)?.[1];
   }
@@ -390,7 +414,9 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
     } catch {
       /* fall through to a subproject */
     }
-    const primary = platforms[0] ?? subprojects[0]!;
+    const controller = /dev\.kikugie\.stonecutter/.test(stripComments(settings)) ? stripComments((await readText(path.join(rootDir, "stonecutter.gradle.kts"))) ?? (await readText(path.join(rootDir, "stonecutter.gradle"))) ?? "") : "";
+    const active = /stonecutter\s*(?:\(\s*\))?\s*(?:\.\s*)?active\s*\(?\s*["']([^"']+)["']/.exec(controller)?.[1];
+    const primary = subprojects.find((p) => p.path === `:${active}`) ?? platforms[0] ?? subprojects[0]!;
     const sub = await readProjectInfo(primary.dir);
     return { ...base, loader: sub.loader, mcVersion: sub.mcVersion, mappings: sub.mappings, modId: sub.modId, mappingsVersion: sub.mappingsVersion, source: "inferred", detectedFrom: [`multi-project: ${subprojects.map((x) => `${x.path}${x.platform ? `=${x.platform}` : ""}`).join(", ")}; defaults to ${primary.path}`, ...(sub.detectedFrom ?? [])], classpathProject: primary.path };
   }
@@ -409,7 +435,7 @@ export async function readProjectInfo(dirIn: string): Promise<ProjectInfo> {
 
 async function readProjectInfoSiblings(rootDir: string, rootProps: Record<string, string>, settings: string): Promise<Loader[]> {
   const out: Loader[] = [];
-  for (const inc of parseSettingsIncludes(settings, rootProps)) {
+  for (const inc of await settingsProjects(rootDir, settings, rootProps)) {
     const p = await subprojectPlatform(path.resolve(rootDir, inc.dir), inc.path.split(":").pop()!);
     if (p && p !== "common") out.push(p);
   }
