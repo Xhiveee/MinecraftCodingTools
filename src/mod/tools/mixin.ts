@@ -1,10 +1,8 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
 import { ACC } from "../index/classfile.js";
 import { loadHints, matchHints, MIXIN_POLICY } from "../mixin/hints.js";
 import { validateProject, type MixinIssue, type ValidateContext } from "../mixin/validate.js";
+import { resolveMixinEnvironment } from "../mixin/environment.js";
 import { readProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
 import { lookupProfile, type Services } from "../services.js";
@@ -24,12 +22,13 @@ export async function mixinContext(services: Services, projectDir: string, sourc
   }
   const opened = await services.indexes.open({ projectDir, source: source ?? "auto" });
   notes.push(...opened.notes);
-  const build = ["build.gradle", "build.gradle.kts"].map((f) => path.join(project.dir, f)).find(existsSync);
-  const buildText = build ? await readFile(build, "utf8") : "";
-  const mixinExtrasAvailable = !!profile?.mixin.mixinExtras.bundled || /mixinextras/i.test(buildText);
+  const environment = await resolveMixinEnvironment(services, project, profile?.mixin.registration);
+  notes.push(...environment.notes);
+  const bundled = !!profile?.mixin.mixinExtras.bundled;
+  const mixinExtrasAvailable = bundled || environment.compileExtras.state === "confirmed" ? true : environment.compileExtras.state === "missing" ? false : undefined;
   const vanillaForLoader = opened.index.meta.kind === "vanilla" && project.loader !== "fabric";
   if (vanillaForLoader) notes.push("Checked against vanilla Minecraft: methods added by Forge/NeoForge patches are not visible.");
-  return { ctx: { index: opened.index, project, profile, vanillaForLoader, mixinExtrasAvailable }, notes };
+  return { ctx: { index: opened.index, project, profile, vanillaForLoader, mixinExtrasAvailable, environment, mixinExtrasRuntime: bundled ? "confirmed" : environment.runtimeExtras.state }, notes };
 }
 
 const summarize = (issues: MixinIssue[]) => ({
@@ -68,11 +67,12 @@ export async function mixinValidate(services: Services, a: V) {
     ...s,
     configs: runs.flatMap((r) =>
       r.configs.map((c) => ({
-        file: r.label ? `${r.label}: ${c.file}` : c.file, registered: c.registered, compatibilityLevel: c.compatibilityLevel,
+        file: r.label ? `${r.label}: ${c.file}` : c.file, registered: c.registered, registration: c.registration, compatibilityLevel: c.compatibilityLevel,
         mixins: c.mixins.map((x) => `${x.name} [${x.section}]${x.errors ? ` ${x.errors} error(s)` : ""}${x.warnings ? ` ${x.warnings} warning(s)` : ""}`),
       })),
     ),
     issues: shown.map((i) => ({ ...i, missing: undefined })),
+    environments: runs.map((r) => ({ project: r.ctx.project.gradlePath ?? ":", ...r.ctx.environment })),
     notes: [...new Set(runs.flatMap((r) => r.notes))],
   };
   const n = runs.reduce((k, r) => k + r.configs.reduce((x, c) => x + c.mixins.length, 0), 0);

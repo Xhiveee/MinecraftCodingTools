@@ -126,7 +126,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "mixin_validate",
     title: "Validate mixins",
-    description: "Static mixin check against the real classes: configs and registration, targets, selectors, @At targets, handler signatures, @Local/@ModifyVariable (LVT), accessors/shadows, client-only targets.",
+    description: "Static mixin check against the real classes: configs and registration, targets, selectors, @At targets, handler signatures, @Local/@ModifyVariable (LVT), accessors/shadows, client-only targets. Executes the selected module's Gradle processResources task and resolves compile/runtime dependencies to verify generated loader metadata and MixinExtras; incomplete evidence is reported as a warning.",
     input: S.mixinValidateInput,
     load: async () => (await import("./mixin.js")).mixinValidate as Impl,
   },

@@ -10,7 +10,7 @@ import { ACC, parseMethodDesc, type CodeRefs, type TypedConstant } from "../inde
 import type { McIndex } from "../index/store.js";
 import type { ProjectInfo } from "../project/info.js";
 import type { ResolvedProfile } from "../profiles/schema.js";
-import { readProjectInfo } from "../project/info.js";
+import type { Evidence, EvidenceState, MixinEnvironment } from "./environment.js";
 import { annsOf, boolOf, classesOf, numOf, parseJava, resolveType, strOf, strsOf, type Annotation, type ParsedJava, type ParsedMember } from "./javaparse.js";
 import { parseKotlin } from "./kotlinparse.js";
 
@@ -31,7 +31,9 @@ export interface ValidateContext {
   profile?: ResolvedProfile;
   /** Using vanilla classes for a Forge/NeoForge project (loader-added members are absent). */
   vanillaForLoader: boolean;
-  mixinExtrasAvailable: boolean;
+  mixinExtrasAvailable: boolean | undefined;
+  mixinExtrasRuntime?: EvidenceState;
+  environment?: MixinEnvironment;
 }
 
 export const INJECTORS = ["Inject", "Redirect", "ModifyArg", "ModifyArgs", "ModifyVariable", "ModifyConstant", "WrapOperation", "WrapWithCondition", "ModifyExpressionValue", "ModifyReturnValue", "ModifyReceiver", "WrapMethod"];
@@ -244,8 +246,12 @@ export class MixinValidator {
     for (const m of p.members) {
       if (m.modifiers.includes("suspend")) continue; // the parser reports why its JVM Continuation descriptor is not checked
       for (const a of m.annotations) {
-        if (MIXINEXTRAS.has(a.name) && !this.ctx.mixinExtrasAvailable) {
+        if (MIXINEXTRAS.has(a.name) && this.ctx.mixinExtrasAvailable === false) {
           push({ severity: "error", message: `@${a.name} is MixinExtras, which is not available in this project.`, suggestion: this.ctx.profile?.mixin.mixinExtras.note ?? "Add MixinExtras as a dependency." });
+        } else if (MIXINEXTRAS.has(a.name) && this.ctx.mixinExtrasRuntime === "missing") {
+          push({ severity: "error", message: `@${a.name} requires MixinExtras at runtime, but it is absent from this module's runtime classpath.`, suggestion: "Add the loader-specific MixinExtras runtime dependency; compileOnly is insufficient." });
+        } else if (MIXINEXTRAS.has(a.name) && (this.ctx.mixinExtrasAvailable === undefined || this.ctx.mixinExtrasRuntime === "unknown")) {
+          push({ severity: "warning", message: `Could not confirm MixinExtras availability for @${a.name}; dependency validation is incomplete.` });
         }
       }
       const remap = (a: Annotation) => boolOf(a.args.remap) ?? remapDefault;
@@ -943,7 +949,8 @@ export interface ConfigReport {
   file: string;
   package?: string;
   compatibilityLevel?: string;
-  registered: boolean;
+  registered: boolean | null;
+  registration: Evidence;
   mixins: { name: string; section: string; file?: string; targets: string[]; errors: number; warnings: number }[];
 }
 
@@ -965,16 +972,6 @@ export async function validateProject(ctx: ValidateContext, opts: { mixinClass?:
   const configs: ConfigReport[] = [];
   const { project, profile } = ctx;
   if (!project.mixinConfigs.length) issues.push({ severity: "info", message: "No *.mixins.json found in the project resources." });
-  // registration sources
-  // A common module's configs are registered by the loader subprojects, so look there too.
-  const regDirs = [project.dir];
-  if (project.platform === "common" && project.rootDir) regDirs.push(...((await readProjectInfo(project.rootDir)).subprojects ?? []).map((x) => x.dir));
-  const regFiles: string[] = [];
-  for (const d of regDirs) {
-    regFiles.push(...["build.gradle", "build.gradle.kts"].map((f) => path.join(d, f)), ...(await walk(path.join(d, "src"))).filter((f) => /(fabric\.mod\.json|mods\.toml|MANIFEST\.MF)$/.test(f)));
-  }
-  let regText = (await Promise.all([...new Set(regFiles)].filter(existsSync).map((f) => readFile(f, "utf8")))).join("\n");
-  if (project.modId) regText = regText.replace(/\$\{\s*(?:project\.)?(?:mod_?id|modId|MOD_ID)\s*\}/gi, project.modId);
   const sourceRoots = [...project.javaSourceRoots, ...(project.kotlinSourceRoots ?? [])];
   const allSource = (await Promise.all(sourceRoots.map((r) => walk(r)))).flat().filter((f) => /\.(?:java|kt)$/.test(f));
   const listedFiles = new Set<string>();
@@ -989,12 +986,15 @@ export async function validateProject(ctx: ValidateContext, opts: { mixinClass?:
       continue;
     }
     const base = path.basename(cfgPath);
-    const registered = regText.includes(base);
-    const report: ConfigReport = { file: rel, package: json.package as string | undefined, compatibilityLevel: json.compatibilityLevel as string | undefined, registered, mixins: [] };
+    const registration = ctx.environment?.registrations[base] ?? { state: "unknown", sources: [] };
+    const registered = registration.state === "unknown" ? null : registration.state === "confirmed";
+    const report: ConfigReport = { file: rel, package: json.package as string | undefined, compatibilityLevel: json.compatibilityLevel as string | undefined, registered, registration, mixins: [] };
     configs.push(report);
-    if (!registered) {
+    if (registered === false) {
       const how = profile?.mixin.registration === "fabric.mod.json" ? 'add it to "mixins" in fabric.mod.json' : profile?.mixin.registration === "mods.toml" ? "add [[mixins]] config=\"" + base + "\" to the mods.toml" : "add it to the jar manifest MixinConfigs (and dev runs)";
-      issues.push({ severity: "error", file: rel, message: `${base} is not registered anywhere, so it will never load.`, suggestion: `${how}.` });
+      issues.push({ severity: "error", file: rel, message: `${base} is absent from this module's evaluated loader registration.`, suggestion: `${how}.` });
+    } else if (registered === null) {
+      issues.push({ severity: "warning", file: rel, message: `Could not confirm registration of ${base}; evaluated loader metadata is unavailable.` });
     }
     if (typeof json.package !== "string" || !json.package) {
       issues.push({ severity: "error", file: rel, message: 'Missing "package".' });
