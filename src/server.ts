@@ -14,6 +14,7 @@ const server = new McpServer(SERVER_INFO, {
     'For dependencies: list_project_artifacts -> inspect_code_archive -> search_code_archive -> get_code_archive_class. Reuse returned jarPath/sourcesJarPath. Read outlines before source; prefer original sources. Follow pagination offsets.',
     'Classpath discovery covers compile dependencies; archive usages/callees cover one JAR. Analyze other and nested JARs separately. Kotlin parsing is static and decompiled Kotlin is Java; verify signatures by compiling.',
     'Preserve existing file languages and use detected language preference for new mod code. Validate changed mixins/NMS references, build and run relevant tests; diagnose real failures with analyze_crash.',
+    'Use validate_mod/validate_plugin for selected-module descriptors, validate_resources/data/worldgen for edited resources, and validate_modules for module consistency. Supply mcVersion and generated/dependency resource roots when needed. These are static checks, not game-codec or runtime verification. Image generation requires a host image tool.',
     'Build/classpath tasks execute project code as the current user. Use within authorized project work; runPaperclip/buildtools require authorization for that execution. Report only checks actually performed, distinguishing static checks, compilation and runtime verification.'
   ].join('\n')
 });

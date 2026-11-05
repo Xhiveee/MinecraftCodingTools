@@ -7,6 +7,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Services } from "../services.js";
 import * as S from "./schemas.js";
 import { guard } from "./result.js";
+import { validationTools } from '../../common/validation-tools.js';
 
 type Impl = (services: Services, args: never) => Promise<CallToolResult>;
 interface ToolDef {
@@ -20,6 +21,7 @@ interface ToolDef {
 }
 
 export const TOOLS: ToolDef[] = [
+  ...validationTools('mod'),
   {
     name: "list_versions",
     title: "List versions",

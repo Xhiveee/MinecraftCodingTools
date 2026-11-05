@@ -1,6 +1,6 @@
 ---
 name: minecraft-coding-tools
-description: Use MinecraftCodingTools to develop or debug Fabric, Forge, NeoForge mods and Bukkit, Spigot, Paper plugins, including Java/Kotlin source, mappings, dependencies, Mixin and NMS integration.
+description: Use MinecraftCodingTools to develop or debug Fabric, Forge, NeoForge mods and Bukkit, Spigot, Paper plugins, including Java/Kotlin, mappings, dependencies, Mixin/NMS, resource and data validation, and Minecraft asset generation with a host image tool.
 ---
 
 # MinecraftCodingTools
@@ -19,6 +19,23 @@ description: Use MinecraftCodingTools to develop or debug Fabric, Forge, NeoForg
 3. Find symbols with `search_source`. Read `get_class` outlines first, then request the relevant method or hierarchy. Use exact descriptors for overloaded methods.
 4. For existing mods, use `project_source_search` and `get_project_source` to inspect Java/Kotlin code. Preserve the existing file language; follow the detected language preference for new files.
 5. After changes, use the project's build and relevant tests. Run `mixin_validate` for changed mixins and `nms_validate` for changed NMS/CraftBukkit references. Use `analyze_crash` with a real log when execution fails.
+
+## Implementation guidance
+
+- For mod gameplay, registration, networking, sides or datagen, read [modding](references/modding.md).
+- For plugin commands, events, scheduling, PDC or configuration, read [plugin development](references/plugin-dev.md).
+- For textures, icons, concept art or release artwork requested by the user, read [image generation](references/imagegen.md). This requires the client's image tool; the MCP server does not generate images.
+
+## Static project validation
+
+- `validate_mod` (`target=mod`): Fabric JSON and Forge/NeoForge TOML descriptors, required metadata and Fabric mixin config paths.
+- `validate_plugin` (`target=plugin`): YAML descriptors, main class discovery, dependencies, api-version shape, Paper command metadata and reload calls.
+- `validate_resources`: JSON, model/blockstate/item-definition references, textures, sounds, fonts and PNG animation metadata.
+- `validate_data`: JSON, metadata, version-sensitive paths, function tag references and cycles.
+- `validate_worldgen`: local references between features, structures, pools, biome modifiers and dimensions.
+- `validate_modules`: detected mod/plugin modules, version differences, mod identity, duplicate plugin names and loader imports in common code. Stonecutter version variants are expected to differ.
+
+Shared arguments: `projectDir`, optional `mcVersion`, `roots`, `strict`, `offset`, `limit`. Pass a selected module for descriptor checks. Use `roots` to include generated resources and unpacked dependency resources. These tools execute no builds, resolve no dependencies and run no game codecs. External references are warnings when not supplied locally; static success does not prove runtime compatibility. Module checks discover projects from build files and do not evaluate Gradle.
 
 ## Dependency integration
 

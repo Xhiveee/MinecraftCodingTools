@@ -39,6 +39,10 @@ Tools accept `{"request":{"target":"mod"}}` or `{"request":{"target":"plugin"}}`
 
 Build and classpath tools execute project build scripts. Kotlin analysis is static; dependency discovery covers compile classpaths. Archive analysis works one JAR at a time.
 
+Static validation tools: `validate_resources`, `validate_data`, `validate_worldgen`, and `validate_modules` support both targets; `validate_mod` supports mods and `validate_plugin` supports plugins. Pass `projectDir`, optional `mcVersion`, resource `roots` (including generated/unpacked dependency resources), `strict`, `offset` and `limit`. Results include file diagnostics, error/warning counts and pagination. Validators do not execute builds or game codecs; unresolved external resources are warnings. Descriptor checks apply to a selected module. Module discovery supports detected Gradle mod layouts (including Architectury/Stonecutter) and Gradle/Maven plugin modules without evaluating build scripts.
+
+The bundled agent skill includes focused modding, plugin development and image-asset guidance. Image generation uses the client's image tool, not this MCP server.
+
 Project-local state (logs, classpath cache and resolver scripts) is stored in `.mct/`. Add it to your mod/plugin project's `.gitignore`. Legacy `.ffn/project.json` remains readable; `.mct/project.json` takes priority. Old `.ffn/` and `.bsp/` caches are not migrated automatically.
 
 ## Development
@@ -49,6 +53,6 @@ npm test
 npm run release
 ```
 
-Release output: `releases/MinecraftCodingTools-v0.1.3.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
+Release output: `releases/MinecraftCodingTools-v0.2.0.zip` and SHA-256 checksum. Version comes from `package.json` and is reported in MCP server info. Pushing a `v*` tag builds and publishes the matching GitHub release.
 
 MIT · Based on [FFN](https://github.com/Xhiveee/ffn) and [BSP](https://github.com/Xhiveee/bsp).
