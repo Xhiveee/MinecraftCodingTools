@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -252,10 +252,11 @@ test('MCP shares an archive index between modules and isolates different build r
       const first = path.join(root, 'first');
       const nested = path.join(first, 'nested');
       const index = await getIndex(first);
-      assert.ok(index.startsWith(path.join(first, '.mct', target, 'index') + path.sep));
+      assert.equal(path.relative(path.join(await realpath(first), '.mct', target, 'index', 'archive'), path.dirname(index)), '');
       assert.equal(await getIndex(nested, path.relative(nested, binary)), index);
       const second = path.join(root, 'second');
-      assert.ok((await getIndex(path.join(second, 'nested'))).startsWith(path.join(second, '.mct', target, 'index') + path.sep));
+      const secondIndex = await getIndex(path.join(second, 'nested'));
+      assert.equal(path.relative(path.join(await realpath(second), '.mct', target, 'index', 'archive'), path.dirname(secondIndex)), '');
       const source = await client.callTool({ name: 'get_code_archive_class', arguments: {
         request: { target, projectDir: nested, jarPath: path.relative(nested, binary), className: 'Demo' },
       } });
