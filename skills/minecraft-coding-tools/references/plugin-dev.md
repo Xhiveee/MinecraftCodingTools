@@ -11,3 +11,5 @@ Use stable NamespacedKey and PDC types for small persistent metadata. For larger
 Optional integrations need descriptor dependencies, presence checks and service-provider checks; an installed Vault plugin alone does not establish an economy provider. Keep provided platform/plugin APIs out of shaded output. Prefer public APIs before NMS; validate changed NMS references with `nms_validate`.
 
 Run `validate_plugin`, build the intended artifact and restart the development server for lifecycle checks. Distinguish source descriptors with resource placeholders from the processed descriptors in the JAR.
+
+Use `validate_plugin` with `jarPath` on the packaged plugin and the [Paper smoke workflow](runtime.md) where authorized. For feature acceptance, exercise command registration, allowed and denied senders, event registration and a restart with saved data. If Paper, Spigot or Folia compatibility is part of the requirement, verify the claimed platform and record the server version.

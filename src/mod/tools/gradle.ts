@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { diagnose, type Diagnosis } from "../diagnostics/parse.js";
@@ -7,8 +7,13 @@ import { runProcess, type RunResult } from "../exec/run.js";
 import { discoverJdks, pickJdk, type JdkInfo } from "../jdk/discover.js";
 import { readProjectInfo, type ProjectInfo } from "../project/info.js";
 import { lookupProfile, type Services } from "../services.js";
-import { clip, fail, ok } from "./result.js";
+import { clip, ok } from "./result.js";
 import { gradleBuildInput } from "./schemas.js";
+import { blockedBuild, buildEvidence, failedBuildUnit, readBuildLog } from "../../common/build-evidence.js";
+import { gradleMaxJvm, wrapperGradleVersion } from "../../common/gradle-jvm.js";
+import { gradleState, stateDir } from "../../common/project-state.js";
+
+export { gradleMaxJvm, wrapperGradleVersion } from "../../common/gradle-jvm.js";
 
 const KEEP = [
   /\.(java|kts?):(\d+:|\[\d+,\d+\])|^\s*[ew]: /,
@@ -30,6 +35,7 @@ export interface GradleRunOptions {
   daemon: boolean;
   env?: Record<string, string>;
   logName: string;
+  signal?: AbortSignal;
 }
 
 export interface GradleRun {
@@ -40,25 +46,8 @@ export interface GradleRun {
   result: RunResult;
   diagnosis: Diagnosis;
   warnings: string[];
-}
-
-/** Gradle version from the project's wrapper properties. */
-export async function wrapperGradleVersion(root: string): Promise<string | undefined> {
-  try {
-    const t = await readFile(path.join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "utf8");
-    return /gradle-(\d+(?:\.\d+)+(?:-rc-\d+)?)-(?:bin|all)\.zip/.exec(t)?.[1];
-  } catch {
-    return undefined;
-  }
-}
-
-/** Newest Java a Gradle version can run on (Gradle's compatibility matrix). */
-export function gradleMaxJvm(v: string): number {
-  const [maj = 0, min = 0] = v.split(".").map(Number);
-  const n = maj * 100 + min;
-  const table: [number, number][] = [[901, 25], [814, 24], [810, 23], [808, 22], [805, 21], [803, 20], [706, 19], [705, 18], [703, 17], [700, 16], [608, 15], [607, 15], [603, 14], [0, 11]];
-  if (maj >= 10) return 99;
-  return table.find(([g]) => n >= g)![1];
+  tasks: string[];
+  failedUnits: string[];
 }
 
 const versionGte = (a: string, b: string) => {
@@ -85,12 +74,13 @@ async function requiredJvm(services: Services, info: ProjectInfo, warnings: stri
   }
 }
 
-export async function runGradle(services: Services, o: GradleRunOptions): Promise<GradleRun | { error: string }> {
-  const project = await readProjectInfo(o.projectDir);
+export async function runGradle(services: Services, o: GradleRunOptions): Promise<GradleRun | { error: string; cause: "project" | "wrapper" | "jdk" }> {
+  const project = await readProjectInfo(o.projectDir).catch((error: Error) => error);
+  if (project instanceof Error) return { error: project.message, cause: "project" };
   const warnings: string[] = [];
   const root = project.rootDir ?? project.dir;
   const wrapper = path.join(root, process.platform === "win32" ? "gradlew.bat" : "gradlew");
-  if (!existsSync(wrapper)) return { error: `No Gradle wrapper (${path.basename(wrapper)}) in ${root}.` };
+  if (!existsSync(wrapper)) return { error: `No Gradle wrapper (${path.basename(wrapper)}) in ${root}.`, cause: "wrapper" };
   // a subproject directory: run from the root and qualify bare task names (":fabric:build")
   const sub = project.gradlePath && project.gradlePath !== ":" ? project.gradlePath : undefined;
   const tasks = o.tasks.map((t) => (sub && !t.startsWith(":") && !t.startsWith("-") && t !== "ffnPrintClasspath" ? `${sub}:${t}` : t));
@@ -100,13 +90,13 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
   if (o.javaHome) {
     jdk = all.find((j) => path.resolve(j.home) === path.resolve(o.javaHome!)) ?? { home: o.javaHome, major: 0, version: "?", isJdk: true, source: "javaHome" };
     if (jdk.major && jdk.major < req.jvm) warnings.push(`javaHome is JDK ${jdk.major} but ${req.jvm}+ is required: ${req.why}`);
+    if (jdk.major && req.max && jdk.major > req.max) warnings.push(`javaHome is JDK ${jdk.major}; Gradle ${await wrapperGradleVersion(root)} supports up to JDK ${req.max}.`);
   } else {
     const choice = pickJdk(all, req.jvm, req.why, req.max);
-    if (!choice.jdk) return { error: choice.missing! };
+    if (!choice.jdk) return { error: choice.missing!, cause: "jdk" };
     jdk = choice.jdk;
   }
-  const stateDir = path.join(root, ".mct");
-  await mkdir(stateDir, { recursive: true });
+  const state = stateDir(root);
   const toolchainPaths = all.filter((j) => j.isJdk).map((j) => j.home).join(",");
   const args = [
     ...tasks,
@@ -115,32 +105,38 @@ export async function runGradle(services: Services, o: GradleRunOptions): Promis
     ...(toolchainPaths ? [`-Porg.gradle.java.installations.paths=${toolchainPaths}`] : []),
     ...(o.args ?? []),
   ];
-  const env: NodeJS.ProcessEnv = {
+  const storage = await gradleState(root, {
     ...process.env,
     JAVA_HOME: jdk.home,
     PATH: `${path.join(jdk.home, "bin")}${path.delimiter}${process.env.PATH ?? ""}`,
     ...o.env,
-  };
+  });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const logFile = path.join(stateDir, "logs", `${o.logName}-${stamp}.log`);
+  const logFile = path.join(state, "logs", `${o.logName}-${stamp}-${randomUUID()}.log`);
+  const failedUnits = new Set<string>();
+  const commandArgs = [...storage.args, ...args];
   const result = await runProcess({
     command: wrapper,
-    args,
+    args: commandArgs,
     cwd: root,
-    env,
+    env: storage.env,
     timeoutMs: o.timeoutSec * 1000,
+    signal: o.signal,
     logFile,
     tailLines: 80,
     keepPatterns: KEEP,
     maxKept: 300,
+    onLine: line => {
+      const unit = failedBuildUnit(line);
+      if (unit && failedUnits.size < 10) failedUnits.add(unit);
+    },
   });
-  const size = statSync(logFile).size;
-  const text = size < 8_000_000 ? await readFile(logFile, "utf8") : [...result.kept, ...result.tail].join("\n");
-  const diagnosis = diagnose(text);
-  return { project, jdk, requiredJvm: req.jvm, command: `${path.basename(wrapper)} ${args.join(" ")}`, result, diagnosis, warnings };
+  const diagnosis = diagnose(await readBuildLog(result));
+  return { project, jdk, requiredJvm: req.jvm, command: `${path.basename(wrapper)} ${commandArgs.join(" ")}`, result, diagnosis, warnings, tasks, failedUnits: [...failedUnits] };
 }
 
 function status(r: RunResult): string {
+  if (r.aborted) return "cancelled";
   if (r.timedOut) return "timed out (process tree killed)";
   return r.exitCode === 0 ? "succeeded" : `failed (exit ${r.exitCode ?? r.signal})`;
 }
@@ -168,7 +164,7 @@ function report(run: GradleRun) {
 
 type BuildArgs = z.infer<z.ZodObject<typeof gradleBuildInput>>;
 
-export async function gradleBuild(services: Services, a: BuildArgs) {
+export async function gradleBuild(services: Services, a: BuildArgs, signal?: AbortSignal) {
   const run = await runGradle(services, {
     projectDir: a.projectDir,
     tasks: a.tasks?.length ? a.tasks : ["build"],
@@ -177,9 +173,13 @@ export async function gradleBuild(services: Services, a: BuildArgs) {
     timeoutSec: a.timeoutSec ?? 1200,
     daemon: a.daemon ?? true,
     logName: "build",
+    signal,
   });
-  if ("error" in run) return fail(run.error);
+  if ("error" in run) return blockedBuild(run.error, path.resolve(a.projectDir), run.cause);
   const data = report(run);
-  const okRun = run.result.exitCode === 0 && !run.result.timedOut;
-  return { ...ok(`Gradle ${(a.tasks ?? ["build"]).join(" ")} ${data.status} in ${data.durationSec}s with JDK ${run.jdk.major}. ${run.diagnosis.summary}`, data), isError: !okRun };
+  const structuredContent = {
+    ...buildEvidence(run.result, run.diagnosis.findings, run.project, run.tasks, run.failedUnits),
+    buildSystem: "gradle", jdk: run.jdk.major, diagnostics: data.findings, warnings: data.warnings,
+  };
+  return { ...ok(`Gradle ${run.tasks.join(" ")} ${data.status} in ${data.durationSec}s with JDK ${run.jdk.major}. ${run.diagnosis.summary}`, data), structuredContent, isError: structuredContent.status !== "passed" };
 }

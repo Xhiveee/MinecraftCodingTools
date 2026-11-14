@@ -1,6 +1,7 @@
 node_modules/
 dist/
 releases/
+.mct/
 .env
 .env.*
 !.env.example

@@ -8,3 +8,8 @@ export const validationInput = {
   offset: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(500).optional(),
 };
+
+export const pluginValidationInput = {
+  ...validationInput,
+  jarPath: z.string().optional().describe('Inspect the built plugin JAR relative to projectDir or absolute. Checks the processed descriptor and declared classes without executing the JAR.'),
+};

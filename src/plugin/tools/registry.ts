@@ -8,19 +8,33 @@ import type { Services } from "../services.js";
 import * as S from "./schemas.js";
 import { guard } from "./result.js";
 import { validationTools } from '../../common/validation-tools.js';
+import { verificationTools } from '../../common/verification-tools.js';
 
-type Impl = (services: Services, args: never) => Promise<CallToolResult>;
+type Impl = (services: Services, args: never, signal?: AbortSignal) => Promise<CallToolResult>;
 interface ToolDef {
   name: string;
   title: string;
   description: string;
   input: Record<string, unknown>;
   readOnly?: boolean;
+  openWorld?: boolean;
   load: () => Promise<Impl>;
 }
 
 export const TOOLS: ToolDef[] = [
   ...validationTools('plugin'),
+  ...verificationTools,
+  {
+    name: "paper_smoke_test",
+    title: "Smoke-test plugin on Paper",
+    description: "Launch a trusted local Paper JAR with a built plugin in a fresh loopback workspace. Observe startup and plugin enable/disable, send stop, and retain logs. Requires explicit execution authorization and EULA acceptance.",
+    input: S.paperSmokeTestInput,
+    readOnly: false,
+    load: async () => {
+      const { paperSmokeTest } = await import("./paper-smoke.js");
+      return (_services, args, signal) => paperSmokeTest(args, signal);
+    },
+  },
   {
     name: "list_versions",
     title: "List versions",
@@ -48,6 +62,7 @@ export const TOOLS: ToolDef[] = [
     title: "Get server class",
     description: "A server/API class: outline (default), one method's source (method=), hierarchy/overrides (detail=hierarchy) or paged full source. Outline first, then method.",
     input: S.getClassInput,
+    readOnly: false,
     load: async () => (await import("./source.js")).getClass as Impl,
   },
   {
@@ -104,7 +119,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "build",
     title: "Build plugin",
-    description: "Run Gradle (gradlew) or Maven (mvnw/mvn) with an auto-picked JDK; build scripts execute project code as the MCP user. Returns parsed errors (file:line) and dependency/JVM problems. Log kept on disk.",
+    description: "Run Gradle tasks or Maven goals in the selected module. Build scripts execute as the MCP user. Returns failed tasks/goals, classified diagnostics, and the full log path.",
     input: S.buildInput,
     readOnly: false,
     load: async () => (await import("./build.js")).build as Impl,
@@ -122,8 +137,8 @@ export function registerTools(server: McpServer, getServices: () => Services | P
   for (const t of TOOLS) {
     server.registerTool(
       t.name,
-      { title: t.title, description: t.description, inputSchema: t.input as never, annotations: { readOnlyHint: t.readOnly ?? true, openWorldHint: true } },
-      (async (args: never) => guard(async () => (await t.load())(await getServices(), args))) as never,
+      { title: t.title, description: t.description, inputSchema: t.input as never, annotations: { readOnlyHint: t.readOnly ?? true, openWorldHint: t.openWorld ?? true } },
+      (async (args: never, context: { signal: AbortSignal }) => guard(async () => (await t.load())(await getServices(), args, context.signal))) as never,
     );
   }
 }

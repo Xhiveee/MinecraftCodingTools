@@ -136,7 +136,8 @@ export function diagnose(text: string): Diagnosis {
         continue;
       }
     }
-    if ((m = /Could not (?:resolve|find)(?: artifact)? ((?:[\w.-]+:){2,4}[\w.+-]+)/.exec(line)) || (m = /following artifacts could not be resolved: ([^,]+?)(?: \(absent\))?[,:]/.exec(line))) {
+    const mavenResolution = /(?:following artifacts could not be resolved:|Could not (?:find|transfer) artifact) ((?:[\w.-]+:){2,4}[\w.+-]+)(?: \((absent|present, but unavailable)\))?/.exec(line);
+    if ((m = mavenResolution ?? /Could not (?:resolve|find)(?: artifact)? ((?:[\w.-]+:){2,4}[\w.+-]+)/.exec(line))) {
       const near = lines.slice(i, i + 8).join("\n");
       const status = /status code (\d{3})|status: (\d{3})/.exec(near);
       const art = m[1]!;
@@ -146,7 +147,9 @@ export function diagnose(text: string): Diagnosis {
         severity: "error",
         message: `Could not resolve ${art}${status ? ` (HTTP ${status[1] ?? status[2]})` : ""}.`,
         evidence: line,
-        suggestion: spigot
+        suggestion: mavenResolution?.[2] === "present, but unavailable" && /offline mode/.test(near)
+          ? "Maven's local artifact is tied to another repository ID. Use the original repository ID or resolve it online from the configured repository."
+          : spigot
           ? "org.spigotmc:spigot / minecraft-server exist only in the local Maven repo after BuildTools (--remapped for remapped-mojang) — get_profile shows the command."
           : status && /^5/.test(status[1] ?? status[2] ?? "")
             ? "Repository server error — usually temporary. Retry."

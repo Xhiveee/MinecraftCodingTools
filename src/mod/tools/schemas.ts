@@ -25,6 +25,7 @@ export const indexSpecShape = {
 };
 
 export const listVersionsInput = {
+  projectDir: z.string().optional().describe("Store downloaded data in this project's .mct."),
   mcVersion: z.string().optional().describe("Details for this version: loader versions, Java, Gradle plugin."),
   includeSnapshots: z.boolean().optional(),
   includeUnsupported: z.boolean().optional().describe("Include versions below 1.20.1."),
@@ -32,6 +33,7 @@ export const listVersionsInput = {
 };
 
 export const getProfileInput = {
+  projectDir: z.string().optional().describe("Store downloaded data in this project's .mct."),
   mcVersion: z.string().describe("e.g. 1.20.1, 1.21.1, 26.3"),
   loader: LoaderSchema,
   verbose: z.boolean().optional().describe("Add matched rules, sources, references."),
@@ -87,6 +89,7 @@ export const getClassInput = {
 };
 
 export const translateInput = {
+  projectDir: z.string().optional().describe("Store downloaded mappings in this project's .mct."),
   mcVersion: z.string(),
   name: z.string().describe("Class (a.b.C, class_1234, C_1234_), member (Owner#name, name(desc)) or bare member name (m_1234_, method_5678)."),
   from: z.enum(NAMES),
@@ -136,6 +139,7 @@ export const docsSearchInput = {
 };
 
 export const checkProfilesInput = {
+  projectDir: z.string().optional().describe("Store downloaded data in this project's .mct."),
   loaders: z.array(LoaderSchema).optional(),
   verbose: z.boolean().optional().describe("Also list up-to-date items."),
 };

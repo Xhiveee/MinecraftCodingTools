@@ -145,7 +145,7 @@ export class IndexService {
         const remapped = !!spigotDev && spigotDev.nms.devMappings === "mojang" && spigotDev.obfuscated !== false;
         await runBuildTools(this.services, mc, { remapped, onProgress });
         local = this.localSpigotJar(mc, ns);
-        if (!local) throw new Error(`BuildTools finished but no spigot-${mc} jar with ${ns} names was found (~/.m2, ${path.join(this.services.config.cacheDir, "buildtools")}).`);
+        if (!local) throw new Error(`BuildTools finished but no spigot-${mc} jar with ${ns} names was found in the local Maven repositories or ${path.join(this.services.config.cacheDir, "buildtools")}.`);
         notes.push(`Spigot ${mc} built by BuildTools (cached; also installed into the local Maven repo).`);
       }
       if (local) {
@@ -178,9 +178,11 @@ export class IndexService {
 
   private localSpigotJar(mc: string, ns: MappingNs): string | undefined {
     const v = `${mc}-R0.1-SNAPSHOT`;
-    const dir = path.join(this.services.config.mavenLocal, "org", "spigotmc", "spigot", v);
     const cands = ns === "mojang" ? [`spigot-${v}-remapped-mojang.jar`, `spigot-${v}.jar`] : [`spigot-${v}.jar`, `spigot-${v}-remapped-obf.jar`];
-    for (const c of cands) if (existsSync(path.join(dir, c))) return path.join(dir, c);
+    for (const repo of [this.services.config.projectMavenLocal, this.services.config.mavenLocal]) {
+      const dir = path.join(repo, "org", "spigotmc", "spigot", v);
+      for (const c of cands) if (existsSync(path.join(dir, c))) return path.join(dir, c);
+    }
     const bt = buildToolsOutputs(path.join(this.services.config.cacheDir, "buildtools"), mc);
     const hit = ns === "mojang" ? bt.find((f) => /remapped-mojang/.test(f)) : bt.find((f) => !/remapped/.test(path.basename(f)));
     if (hit) return hit;

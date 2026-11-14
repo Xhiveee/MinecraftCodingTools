@@ -148,11 +148,14 @@ const base = (f: string) => f.split(/[\\/]/).pop() ?? f;
 
 /** Merge duplicates (Gradle prints every error twice since 8.11) and group the same error at different places. */
 export function groupCompilerMessages(messages: CompilerMessage[], maxAlso = 4): CompilerGroup[] {
+  const diagnosticKey = (m: CompilerMessage) => `${m.file}:${m.line}|${m.severity}|${m.text}`;
+  const withSymbol = new Set(messages.filter(m => m.symbol).map(diagnosticKey));
   const seen = new Set<string>();
   const groups = new Map<string, CompilerGroup & { places: string[] }>();
   for (const m of messages) {
+    if (!m.symbol && withSymbol.has(diagnosticKey(m))) continue;
     const place = `${m.file}:${m.line}`;
-    const exact = `${place}|${m.text}|${m.symbol?.name ?? ""}`;
+    const exact = `${diagnosticKey(m)}|${m.symbol?.name ?? ""}`;
     if (seen.has(exact)) continue;
     seen.add(exact);
     const key = m.symbol || m.code === "package_missing" ? `${m.severity}|${m.code}|${m.symbol?.kind ?? ""}|${m.symbol?.name ?? m.text}` : `${m.severity}|${m.text}|${place}`;

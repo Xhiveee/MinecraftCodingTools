@@ -17,8 +17,8 @@ export interface Services {
   indexes: IndexService;
 }
 
-export function createServices(opts: { config?: BspConfig; fetcher?: Fetcher } = {}): Services {
-  const config = opts.config ?? loadConfig();
+export function createServices(opts: { config?: BspConfig; fetcher?: Fetcher; projectRoot?: string } = {}): Services {
+  const config = opts.config ?? loadConfig(process.env, opts.projectRoot);
   const fetcher = opts.fetcher ?? new CachingFetcher({ cacheDir: config.cacheDir, defaultTtlMs: config.cacheTtlMs, offline: config.offline, userAgent: config.userAgent });
   const services: Services = {
     config,

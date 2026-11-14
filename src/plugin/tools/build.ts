@@ -1,5 +1,6 @@
 import AdmZip from "adm-zip";
-import { chmodSync, existsSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync } from "node:fs";
 import { mkdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -11,8 +12,13 @@ import { lookupProfile, type Services } from "../services.js";
 import { ENDPOINTS } from "../sources/endpoints.js";
 import { downloadFile } from "../util/download.js";
 import { findingLine } from "./crash.js";
-import { clip, fail, okText } from "./result.js";
+import { clip, okText } from "./result.js";
 import { buildInput } from "./schemas.js";
+import { blockedBuild, buildEvidence, failedBuildUnit, readBuildLog } from "../../common/build-evidence.js";
+import { gradleMaxJvm, wrapperGradleVersion } from "../../common/gradle-jvm.js";
+import { gradleState, mavenState } from "../../common/project-state.js";
+
+export { gradleMaxJvm, wrapperGradleVersion } from "../../common/gradle-jvm.js";
 
 type A = z.infer<z.ZodObject<typeof buildInput>>;
 
@@ -24,24 +30,6 @@ const KEEP = [
   /JVM runtime version|Unsupported class file|class file version|languageVersion=|Gradle requires JVM|release version|target release/,
   /Exception|Error:|Caused by:/,
 ];
-
-/** Newest Java a Gradle version can run on (Gradle's compatibility matrix). */
-export function gradleMaxJvm(v: string): number {
-  const [maj = 0, min = 0] = v.split(".").map(Number);
-  if (maj >= 10) return 99;
-  const n = maj * 100 + min;
-  const table: [number, number][] = [[903, 25], [901, 25], [814, 24], [810, 23], [808, 22], [805, 21], [803, 20], [706, 19], [705, 18], [703, 17], [700, 16], [607, 15], [603, 14], [0, 11]];
-  return table.find(([g]) => n >= g)![1];
-}
-
-export async function wrapperGradleVersion(root: string): Promise<string | undefined> {
-  try {
-    const t = await readFile(path.join(root, "gradle", "wrapper", "gradle-wrapper.properties"), "utf8");
-    return /gradle-(\d+(?:\.\d+)+(?:-rc-\d+)?)-(?:bin|all)\.zip/.exec(t)?.[1];
-  } catch {
-    return undefined;
-  }
-}
 
 export async function requiredJvm(services: Services, info: ProjectInfo, gradle?: string): Promise<{ jvm: number; max?: number; why: string }> {
   let jvm = 17;
@@ -105,29 +93,32 @@ async function mavenCommand(services: Services, root: string): Promise<{ cmd: st
   return { cmd: bin, note: `Maven ${v} (no mvnw/mvn found; official binary from Maven Central, cached)` };
 }
 
-export async function build(services: Services, a: A) {
+export async function build(services: Services, a: A, signal?: AbortSignal) {
   const info = await readProjectInfo(a.projectDir).catch((e: Error) => e);
-  if (info instanceof Error) return fail(info.message);
+  if (info instanceof Error) return blockedBuild(info.message, path.resolve(a.projectDir), "project");
   const root = info.build === "gradle" ? info.rootDir : info.dir;
   const notes: string[] = [];
   let cmd: string;
   let args: string[];
+  let tasks: string[];
   let gradleVersion: string | undefined;
   if (info.build === "gradle") {
     cmd = gradleWrapper(root);
-    if (!existsSync(cmd)) return fail(`No Gradle wrapper in ${root}. Add one (gradle wrapper --gradle-version <get_profile's Gradle>) and retry.`);
+    if (!existsSync(cmd)) return blockedBuild(`No Gradle wrapper in ${root}. Add one (gradle wrapper --gradle-version <get_profile's Gradle>) and retry.`, info.dir, "wrapper");
     gradleVersion = await wrapperGradleVersion(root);
     const sub = info.dir !== root ? `:${path.relative(root, info.dir).split(path.sep).join(":")}` : "";
-    args = [...(a.tasks?.length ? a.tasks : ["build"]).map((t) => (sub && !t.startsWith(":") && !t.startsWith("-") ? `${sub}:${t}` : t)), "--console=plain"];
+    tasks = (a.tasks?.length ? a.tasks : ["build"]).map((t) => (sub && !t.startsWith(":") && !t.startsWith("-") ? `${sub}:${t}` : t));
+    args = [...tasks, "--console=plain"];
   } else {
     try {
       const m = await mavenCommand(services, root);
       cmd = m.cmd;
       if (m.note) notes.push(m.note);
     } catch (e) {
-      return fail((e as Error).message);
+      return blockedBuild((e as Error).message, info.dir, "maven");
     }
-    args = [...(a.tasks?.length ? a.tasks : ["package"]), "-B", "-ntp"];
+    tasks = a.tasks?.length ? a.tasks : ["package"];
+    args = [...tasks, "-B", "-ntp"];
   }
   const req = await requiredJvm(services, info, gradleVersion);
   const all = await discoverJdks();
@@ -135,31 +126,43 @@ export async function build(services: Services, a: A) {
   if (a.javaHome) jdk = all.find((j) => path.resolve(j.home) === path.resolve(a.javaHome!)) ?? { home: a.javaHome, major: 0, version: "?", isJdk: true, source: "javaHome" };
   else {
     const choice = pickJdk(all, req.jvm, req.why, req.max);
-    if (!choice.jdk) return fail(choice.missing!);
+    if (!choice.jdk) return blockedBuild(choice.missing!, info.dir, "jdk");
     jdk = choice.jdk;
+  }
+  if (jdk.major && (jdk.major < req.jvm || req.max && jdk.major > req.max)) {
+    notes.push(`javaHome is JDK ${jdk.major}; expected ${req.max ? `${req.jvm}–${req.max}` : `${req.jvm}+`} (${req.why}).`);
   }
   if (info.build === "gradle") {
     const paths = all.filter((j) => j.isJdk).map((j) => j.home).join(",");
     if (paths) args.push(`-Porg.gradle.java.installations.paths=${paths}`);
   }
   args.push(...(a.args ?? []));
-  const logFile = path.join(root, ".mct", "logs", `build-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
+  const logFile = path.join(root, ".mct", "logs", `build-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}.log`);
   await mkdir(path.dirname(logFile), { recursive: true });
+  const failedUnits = new Set<string>();
+  const storage = await (info.build === "gradle" ? gradleState : mavenState)(info.rootDir, {
+    ...process.env, JAVA_HOME: jdk.home, PATH: `${path.join(jdk.home, "bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+  });
   const r = await runProcess({
     command: cmd,
-    args,
+    args: [...storage.args, ...args],
     cwd: root,
-    env: { ...process.env, JAVA_HOME: jdk.home, PATH: `${path.join(jdk.home, "bin")}${path.delimiter}${process.env.PATH ?? ""}` },
+    env: storage.env,
     timeoutMs: (a.timeoutSec ?? 1200) * 1000,
+    signal,
     logFile,
     tailLines: 60,
     keepPatterns: KEEP,
     maxKept: 300,
+    onLine: line => {
+      const unit = failedBuildUnit(line);
+      if (unit && failedUnits.size < 10) failedUnits.add(unit);
+    },
   });
-  const text = statSync(logFile).size < 8_000_000 ? await readFile(logFile, "utf8") : [...r.kept, ...r.tail].join("\n");
-  const d = diagnose(text);
-  const failed = r.exitCode !== 0 || r.timedOut;
-  const status = r.timedOut ? "timed out (killed)" : failed ? `failed (exit ${r.exitCode ?? r.signal})` : "succeeded";
+  const d = diagnose(await readBuildLog(r));
+  const evidence = buildEvidence(r, d.findings, { ...info, rootDir: root }, tasks, [...failedUnits]);
+  const failed = evidence.status !== "passed";
+  const status = r.aborted ? "cancelled" : r.timedOut ? "timed out (killed)" : failed ? `failed (exit ${r.exitCode ?? r.signal})` : "succeeded";
   const errs = d.findings.filter((f) => f.severity === "error");
   const shown = [...errs, ...d.findings.filter((f) => f.severity !== "error" && f.kind !== "compile_warning")].slice(0, 15);
   const artifacts = failed ? [] : await builtJars(info);
@@ -173,7 +176,14 @@ export async function build(services: Services, a: A) {
     ...notes.map((n) => `note: ${n}`),
     `log: ${logFile}`,
   ];
-  return { ...okText(out.join("\n")), isError: failed };
+  return {
+    ...okText(out.join("\n")),
+    structuredContent: {
+      ...evidence, buildSystem: info.build, jdk: jdk.major, artifacts, warnings: notes,
+      diagnostics: shown.map(f => ({ ...f, message: clip(f.message, 300), evidence: f.evidence && clip(f.evidence, 200) })),
+    },
+    isError: failed,
+  };
 }
 
 async function builtJars(info: ProjectInfo): Promise<string[]> {

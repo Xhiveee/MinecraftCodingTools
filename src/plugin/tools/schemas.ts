@@ -26,12 +26,14 @@ export const indexSpecShape = {
 };
 
 export const listVersionsInput = {
+  projectDir: z.string().optional().describe("Store downloaded data in this project's .mct."),
   mcVersion: z.string().optional().describe("Details for this version: builds, artifacts, Java, NMS package."),
   includeSnapshots: z.boolean().optional().describe("Include pre-releases."),
   limit: z.number().int().min(1).max(500).optional().describe("Default 40."),
 };
 
 export const getProfileInput = {
+  projectDir: z.string().optional().describe("Store downloaded data in this project's .mct."),
   mcVersion: z.string().describe("e.g. 1.16.5, 1.20.4, 1.21.11, 26.3"),
   platform: PlatformSchema,
   build: z.enum(["gradle", "maven"]).optional().describe("Add a build snippet for this build tool."),
@@ -60,6 +62,7 @@ export const getClassInput = {
 };
 
 export const translateInput = {
+  projectDir: z.string().optional().describe("Store downloaded mappings in this project's .mct."),
   mcVersion: z.string(),
   name: z.string().describe("Class (a.b.C, simple name, v1_16_R3.EntityPlayer, org.bukkit.craftbukkit[.vX_Y_RZ].X), member (Owner#name[(desc)]) or bare member name."),
   from: z.enum(NS).optional().describe("Namespace of name (default: first that matches: mojang, spigot, obf)."),
@@ -86,6 +89,17 @@ export const buildInput = {
   args: z.array(z.string()).optional().describe("Extra args, e.g. --offline, -DskipTests."),
   javaHome: z.string().optional().describe("Force a JDK (default: auto-picked)."),
   timeoutSec: z.number().int().positive().max(7200).optional().describe("Default 1200."),
+};
+
+export const paperSmokeTestInput = {
+  projectDir: z.string().min(1).describe("Plugin module. Smoke-test workspaces and logs live in .mct/smoke."),
+  serverJar: z.string().min(1).describe("Trusted local runnable Paper JAR. Paperclip may fetch its usual libraries."),
+  pluginJar: z.string().min(1).describe("Built local plugin JAR, relative to projectDir or absolute."),
+  dependencyJars: z.array(z.string().min(1)).max(10).optional().describe("Trusted local dependency plugin JARs to deploy."),
+  javaHome: z.string().min(1).describe("Local JDK installation compatible with the supplied Paper JAR."),
+  acceptEula: z.literal(true).describe("Caller has accepted Mojang's Minecraft EULA for this run."),
+  allowExecution: z.literal(true).describe("Caller has authorized executing the specified server and plugin JARs as the MCP user."),
+  startupTimeoutSec: z.number().int().min(1).max(600).optional().describe("Startup deadline, default 180 seconds. Up to 20 additional seconds for clean shutdown."),
 };
 
 export const analyzeCrashInput = {

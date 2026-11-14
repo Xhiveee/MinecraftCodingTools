@@ -5,11 +5,15 @@ import YAML from 'yaml';
 import { parse as parseToml } from 'smol-toml';
 import type { z } from 'zod';
 import { ok } from './result.js';
+import { readPluginArchive } from './plugin-archive.js';
+import { loadConfig } from '../mod/config.js';
 import { readProjectInfo as modInfo } from '../mod/project/info.js';
+import { loadProfiles } from '../mod/profiles/loader.js';
+import { resolveProfile } from '../mod/profiles/resolve.js';
 import { readProjectInfo as pluginInfo, parseProperties } from '../plugin/project/info.js';
-import { validationInput } from './validation-schemas.js';
+import { pluginValidationInput } from './validation-schemas.js';
 
-type Args = z.infer<z.ZodObject<typeof validationInput>>;
+type Args = z.infer<z.ZodObject<typeof pluginValidationInput>>;
 type Finding = { severity: 'error' | 'warning'; file: string; message: string };
 type Json = Record<string, any>;
 export type ValidationKind = 'resources' | 'data' | 'worldgen' | 'plugin' | 'mod' | 'modules';
@@ -186,8 +190,18 @@ export async function validate(kind: ValidationKind, a: Args) {
     };
     for (const f of json.keys()) if (/\/tags\/functions?\//.test(f.replaceAll('\\', '/'))) visit(f);
   }
-  if (kind === 'plugin') await plugin(dir, add, parse);
-  if (kind === 'mod') await mod(dir, roots, info, add, parse);
+  if (kind === 'plugin') {
+    if (a.jarPath) {
+      const jar = path.resolve(dir, a.jarPath);
+      try {
+        const metadata = readPluginArchive(jar);
+        pluginDescriptor(metadata.metadata, path.join(jar, metadata.descriptor), add);
+      } catch (error) { add('error', jar, (error as Error).message); }
+    } else {
+      await plugin(dir, add, parse);
+    }
+  }
+  if (kind === 'mod') await mod(dir, roots, info, version, add, parse);
   if (kind === 'modules') await modules(dir, add);
   if (['resources', 'data', 'worldgen'].includes(kind) && ![...json.keys()].some(f => relevant(f) && !f.endsWith('pack.mcmeta'))) add('warning', dir, `No ${kind} JSON files found in the selected roots.`);
   if (['data', 'worldgen'].includes(kind) && !version) add('warning', dir, 'Minecraft version unknown; version-specific directory checks are incomplete. Pass mcVersion.');
@@ -207,49 +221,82 @@ async function plugin(dir: string, add: Add, parse: Parse) {
   const descriptors = ['plugin.yml', 'paper-plugin.yml'].map(n => [path.join(dir, 'src/main/resources', n), path.join(dir, n)].find(existsSync)).filter((p): p is string => !!p);
   if (!descriptors.length) { add('error', dir, 'No plugin.yml or paper-plugin.yml found.'); return; }
   const source = (await files(path.join(dir, 'src')).catch(() => [])).filter(f => /\.(java|kt)$/.test(f));
+  const classes = new Map<string, { file: string; hasSuperclass: boolean }>();
+  for (const file of source) {
+    const text = await readFile(file, 'utf8');
+    const pkg = /\bpackage\s+([\w.]+)/.exec(text)?.[1];
+    for (const cls of text.matchAll(/\bclass\s+([\w$]+)([^\n{]*)/g)) {
+      const name = (pkg ? pkg + '.' : '') + cls[1];
+      classes.set(name, { file, hasSuperclass: /\bextends\s+|:/.test(cls[2]!) });
+    }
+    if (/\b(?:Bukkit|getServer\(\))\.reload\s*\(/.test(text)) add('warning', file, 'Server reload call detected; restart the development server instead.');
+  }
   const parsed: { file: string; value: Json }[] = [];
   for (const f of descriptors) {
     const v = await parse(f, true); if (!v) continue;
     parsed.push({ file: f, value: v });
-    for (const key of ['name', 'version', 'main']) if (typeof v[key] !== 'string' || !v[key].trim()) add('error', f, `Missing or invalid ${key}.`);
-    if (!v['api-version']) add('warning', f, 'api-version is not declared.');
+    pluginDescriptor(v, f, add);
     if (typeof v.version === 'string' && unresolved(v.version)) add('warning', f, 'Version placeholder requires processResources; inspect the built descriptor.');
-    if (typeof v.main === 'string') {
-      if (!/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(v.main)) { add('error', f, 'Invalid main class name.'); continue; }
-      const simple = v.main.split('.').pop()!;
-      let found = false;
-      for (const s of source) {
-        const text = await readFile(s, 'utf8');
-        const pkg = /\bpackage\s+([\w.]+)/.exec(text)?.[1];
-        if ((pkg ? pkg + '.' : '') + simple === v.main && new RegExp(`\\bclass\\s+${simple.replaceAll('$', '\\$')}\\b`).test(text)) {
-          found = true;
-          if (!/\bextends\s+|\bclass\s+\w+[^\n{]*:/.test(text)) add('warning', s, 'Main class has no visible superclass; verify it extends JavaPlugin.');
-        }
-      }
-      if (!found) add('warning', f, `Main class ${v.main} not found in src; generated sources or dependencies were not inspected.`);
+    if (typeof v.main === 'string' && /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(v.main)) {
+      const cls = classes.get(v.main);
+      if (!cls) add('warning', f, `Main class ${v.main} not found in src; generated sources or dependencies were not inspected.`);
+      else if (!cls.hasSuperclass) add('warning', cls.file, 'Main class has no visible superclass; verify it extends JavaPlugin.');
     }
-    if (f.endsWith('paper-plugin.yml') && v.commands) add('warning', f, 'Paper plugins register commands through lifecycle APIs, not the commands field.');
-    if (v['api-version'] !== undefined && !/^\d+\.\d+(?:\.\d+)?$/.test(String(v['api-version']))) add('error', f, 'Invalid api-version format.');
-    if (v['folia-supported'] !== undefined && typeof v['folia-supported'] !== 'boolean') add('error', f, 'folia-supported must be boolean.');
-    for (const key of ['depend', 'softdepend', 'loadbefore']) if (v[key] !== undefined && (!Array.isArray(v[key]) || !v[key].every((x: unknown) => typeof x === 'string'))) add('error', f, `${key} must be a string array.`);
-    if (v.dependencies !== undefined && !object(v.dependencies)) add('error', f, 'Paper dependencies must be a mapping.');
   }
   if (parsed.length === 2) for (const key of ['name', 'version', 'api-version']) {
     if (String(parsed[0]!.value[key]) !== String(parsed[1]!.value[key])) add('warning', parsed[1]!.file, `${key} differs between plugin descriptors; verify the intended dual-platform metadata.`);
   }
-  for (const f of source) {
-    const text = await readFile(f, 'utf8');
-    if (/\b(?:Bukkit|getServer\(\))\.reload\s*\(/.test(text)) add('warning', f, 'Server reload call detected; restart the development server instead.');
+}
+
+function pluginDescriptor(v: Json, file: string, add: Add) {
+  for (const key of ['name', 'version', 'main']) if (typeof v[key] !== 'string' || !v[key].trim()) add('error', file, `Missing or invalid ${key}.`);
+  if (typeof v.main === 'string' && !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(v.main)) add('error', file, 'Invalid main class name.');
+  if (!v['api-version']) add('warning', file, 'api-version is not declared.');
+  if (v['api-version'] !== undefined && !/^\d+\.\d+(?:\.\d+)?$/.test(String(v['api-version']))) add('error', file, 'Invalid api-version format.');
+  if (v['folia-supported'] !== undefined && typeof v['folia-supported'] !== 'boolean') add('error', file, 'folia-supported must be boolean.');
+  for (const key of ['depend', 'softdepend', 'loadbefore']) if (v[key] !== undefined && (!Array.isArray(v[key]) || !v[key].every((x: unknown) => typeof x === 'string'))) add('error', file, `${key} must be a string array.`);
+  if (file.endsWith('paper-plugin.yml') && v.commands) add('warning', file, 'Paper plugins register commands through lifecycle APIs, not the commands field.');
+  if (file.endsWith('/plugin.yml') || file.endsWith('\\plugin.yml')) {
+    for (const key of ['commands', 'permissions']) if (v[key] !== undefined && !object(v[key])) add('error', file, `${key} must be a mapping.`);
+  }
+  if (v.dependencies !== undefined && !object(v.dependencies)) add('error', file, 'Paper dependencies must be a mapping.');
+  for (const phase of ['bootstrap', 'server']) {
+    const dependencies = object(v.dependencies) ? v.dependencies[phase] : undefined;
+    if (dependencies === undefined) continue;
+    if (!object(dependencies)) { add('error', file, `dependencies.${phase} must be a mapping.`); continue; }
+    for (const [name, dependency] of Object.entries(dependencies)) {
+      if (!object(dependency)) { add('error', file, `Dependency ${phase}.${name} must be a mapping.`); continue; }
+      for (const flag of ['required', 'join-classpath']) if (dependency[flag] !== undefined && typeof dependency[flag] !== 'boolean') add('error', file, `Dependency ${phase}.${name}.${flag} must be boolean.`);
+      if (dependency.load !== undefined && !['BEFORE', 'AFTER', 'OMIT'].includes(dependency.load)) add('error', file, `Dependency ${phase}.${name}.load must be BEFORE, AFTER or OMIT.`);
+    }
   }
 }
 
-async function mod(dir: string, roots: string[], info: Awaited<ReturnType<typeof modInfo>> | undefined, add: Add, parse: Parse) {
+async function mod(dir: string, roots: string[], info: Awaited<ReturnType<typeof modInfo>> | undefined, version: string | undefined, add: Add, parse: Parse) {
   if (!info) add('warning', dir, 'Project loader/version could not be inferred.');
+  let descriptor: string | undefined, requiresLoaderVersion = true;
+  if (info && info.platform !== 'common' && version) {
+    try {
+      const config = loadConfig();
+      const profiles = await loadProfiles(config.builtinProfilesDir, config.userProfilesDir);
+      const profile = profiles[info.loader];
+      if (profile) {
+        const metadata = resolveProfile(profile, version).metadata;
+        descriptor = metadata.file;
+        requiresLoaderVersion = metadata.loaderVersion !== null;
+      }
+    } catch (error) { add('warning', dir, `Could not resolve descriptor rules: ${(error as Error).message}`); }
+  }
+  function checkFile(descriptorFile: string, name: unknown, role: string) {
+    if (typeof name !== 'string' || !name.trim()) add('error', descriptorFile, `Invalid ${role} path.`);
+    else if (unresolved(name)) add('warning', descriptorFile, `${role} path uses a resource placeholder: ${name}. Inspect processed resources.`);
+    else if (path.isAbsolute(name) || /(^|[/\\])\.\.([/\\]|$)|[\\:]/.test(name)) add('error', descriptorFile, `Invalid ${role} path: ${name}.`);
+    else if (!roots.some(root => existsSync(path.join(root, name)))) add('error', descriptorFile, `Missing ${role} ${name}.`);
+  }
   let count = 0;
   for (const root of roots) for (const name of ['fabric.mod.json', 'META-INF/mods.toml', 'META-INF/neoforge.mods.toml']) {
     const f = path.join(root, name); if (!existsSync(f)) continue; count++;
-    const expected = info?.platform === 'common' ? undefined : info?.loader;
-    if (expected && !({ fabric: 'fabric.mod.json', forge: 'META-INF/mods.toml', neoforge: 'META-INF/neoforge.mods.toml' }[expected] === name)) add('warning', f, `Descriptor differs from detected loader ${expected}.`);
+    if (descriptor && descriptor !== name) add('warning', f, `Expected ${descriptor} for ${info!.loader} ${version}.`);
     if (name.endsWith('.json')) {
       const v = await parse(f); if (!v) continue;
       if (v.schemaVersion !== 1) add('warning', f, 'Only Fabric schemaVersion 1 is checked.');
@@ -258,8 +305,7 @@ async function mod(dir: string, roots: string[], info: Awaited<ReturnType<typeof
       if (v.mixins !== undefined && !Array.isArray(v.mixins)) add('error', f, 'mixins must be an array.');
       for (const entry of array(v.mixins)) {
         const config = typeof entry === 'string' ? entry : entry?.config;
-        if (typeof config !== 'string') add('error', f, 'Invalid mixin config entry.');
-        else if (!roots.some(r => existsSync(path.join(r, config)))) add('error', f, `Missing mixin config ${config}.`);
+        checkFile(f, config, 'mixin config');
       }
       if (v.environment !== undefined && !['*', 'client', 'server'].includes(v.environment)) add('error', f, 'Invalid Fabric environment.');
       if (v.entrypoints !== undefined && !object(v.entrypoints)) add('error', f, 'Fabric entrypoints must be a mapping.');
@@ -267,12 +313,17 @@ async function mod(dir: string, roots: string[], info: Awaited<ReturnType<typeof
         if (!Array.isArray(entries)) { add('error', f, 'Each Fabric entrypoint group must be an array.'); continue; }
         for (const entry of entries) if (typeof entry !== 'string' && !(object(entry) && typeof entry.value === 'string')) add('error', f, 'Invalid Fabric entrypoint.');
       }
-      if (typeof v.accessWidener === 'string' && !roots.some(r => existsSync(path.join(r, v.accessWidener)))) add('error', f, `Missing access widener ${v.accessWidener}.`);
+      if (v.accessWidener !== undefined) checkFile(f, v.accessWidener, 'access widener');
     } else {
       let v: Json;
       try { v = parseToml(await readFile(f, 'utf8')); }
       catch (e) { add('error', f, `Invalid TOML: ${(e as Error).message}`); continue; }
-      for (const key of ['modLoader', 'loaderVersion', 'license']) if (typeof v[key] !== 'string' || !v[key]) add('error', f, `Missing or invalid TOML field ${key}.`);
+      for (const key of ['modLoader', 'loaderVersion', 'license']) {
+        if (key === 'loaderVersion' && descriptor === name && !requiresLoaderVersion && v[key] === undefined) continue;
+        if (typeof v[key] !== 'string' || !v[key]) add('error', f, `Missing or invalid TOML field ${key}.`);
+      }
+      if (v.mixins !== undefined && !Array.isArray(v.mixins)) add('error', f, 'mixins must contain [[mixins]] tables.');
+      for (const mixin of array(v.mixins)) checkFile(f, mixin?.config, 'mixin config');
       if (!Array.isArray(v.mods) || !v.mods.length) add('error', f, 'Missing [[mods]] table.');
       for (const entry of array(v.mods)) {
         if (!object(entry)) { add('error', f, 'Invalid mods table.'); continue; }

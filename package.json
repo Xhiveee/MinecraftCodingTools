@@ -1,6 +1,6 @@
 {
   "name": "minecraft-coding-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/release.test.mjs test/stonecutter.test.mjs test/validation.test.mjs",
+    "test": "npm run build && node --test test/release.test.mjs test/stonecutter.test.mjs test/validation.test.mjs test/reliability.test.mjs",
+    "test:paper": "npm run build && node --test test/paper.integration.mjs",
     "release": "npm run build && node scripts/release.mjs",
     "verify:release": "node scripts/verify-release.mjs"
   },

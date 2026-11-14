@@ -7,3 +7,5 @@ Determine the output's role: in-game texture, pack icon, UI concept, thumbnail o
 In-game textures need deliberate pixel shapes, the project's resolution and correct UV/layout conventions. Tileable block surfaces need matching edges. An attractive rendered cube is concept art, not a usable flat texture. Inspect the generated output at native size and in a repeated/tiled view where relevant; do not label it game-ready until dimensions, alpha and layout have been checked.
 
 Pack icons and promotional art can use larger illustration styles. Keep important subjects readable at thumbnail size. Request transparency for cutouts and preserve it during edits. Save approved assets under the intended resources path, update references and run `validate_resources`; that tool verifies file links, not visual quality.
+
+Check namespace, filename case and packaged paths. For animated textures, check the frame grid and timing in the target client. After building, check that the output includes the edited asset and any companion metadata.

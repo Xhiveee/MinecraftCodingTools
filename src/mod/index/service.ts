@@ -330,7 +330,7 @@ export class IndexService {
       .flatMap((d) => ["build.gradle", "build.gradle.kts", "gradle.properties", "settings.gradle", "settings.gradle.kts", "gradle/libs.versions.toml", "gradle.lockfile", "gradle/wrapper/gradle-wrapper.properties"].map((f) => path.join(d, f)))
       .filter(existsSync)
       .map((f) => `${f}:${statSync(f).mtimeMs}`)
-      .concat("cp3") // bump when the classpath query changes (cp2: + clientCompileClasspath; cp3: per subproject)
+      .concat("cp4-project-gradle-home")
       .join(";");
     if (existsSync(cacheFile)) {
       const c = await readFile(cacheFile, "utf8").then((text) => JSON.parse(text) as { stamp: string; byProject?: Record<string, string[]> }).catch(() => undefined);

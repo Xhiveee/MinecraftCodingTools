@@ -183,11 +183,8 @@ export interface JdkChoice {
  */
 export function pickJdk(all: JdkInfo[], required: number, reason: string, max?: number): JdkChoice {
   const jdks = all.filter((j) => j.isJdk);
-  const exact = jdks.find((j) => j.major === required);
-  const newers = jdks.filter((j) => j.major > required).sort((a, b) => a.major - b.major);
-  // prefer a JDK the build's Gradle can still run on
-  const newer = newers.find((j) => !max || j.major <= max) ?? newers[0];
-  const jdk = exact ?? newer;
+  const jdk = jdks.filter(j => j.major >= required && (max === undefined || j.major <= max))
+    .sort((a, b) => a.major - b.major)[0];
   if (jdk) return { jdk, required, reason, all };
   const have = jdks.map((j) => j.major).join(", ") || "none";
   return {
@@ -195,7 +192,7 @@ export function pickJdk(all: JdkInfo[], required: number, reason: string, max?: 
     reason,
     all,
     missing:
-      `No JDK ${required}+ found (installed: ${have}). ${reason} ` +
+      `No compatible JDK ${max === undefined ? `${required}+` : `${required}–${max}`} found (installed: ${have}). ${reason} ` +
       `Install one (e.g. Eclipse Temurin ${required}: https://adoptium.net/temurin/releases/?version=${required}) ` +
       `or point BSP_JDKS / javaHome at an existing installation.`,
   };

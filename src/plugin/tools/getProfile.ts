@@ -53,7 +53,8 @@ export async function concreteProfile(services: Services, platform: A["platform"
     if (dep.artifact === "spigot") {
       const ver = `${mc}-R0.1-SNAPSHOT`;
       nmsDep = `${dep.group}:${dep.artifact}:${ver}${dep.classifier ? `:${dep.classifier}` : ""}`;
-      nmsDepLocal = existsSync(path.join(services.config.mavenLocal, "org", "spigotmc", "spigot", ver, `spigot-${ver}${dep.classifier ? `-${dep.classifier}` : ""}.jar`));
+      const artifact = `spigot-${ver}${dep.classifier ? `-${dep.classifier}` : ""}.jar`;
+      nmsDepLocal = [services.config.projectMavenLocal, services.config.mavenLocal].some(repo => existsSync(path.join(repo, "org", "spigotmc", "spigot", ver, artifact)));
     } else {
       nmsDep = await coord(dep);
       if (!nmsDep) notes.warn(`No ${dep.artifact} published for ${mc} (paperweight-userdev needs one).`);
@@ -101,7 +102,7 @@ export async function getProfile(services: Services, a: A) {
     a.platform === "bukkit"
       ? "NMS: not part of the Bukkit API."
       : `NMS: ${nms.approach}; dev names ${nms.devMappings}, runtime ${nms.runtimeMappings}${nms.reobf ? ", remap jar to runtime names" : ""}; ${nms.versionedNmsPackage ? "NMS package net.minecraft.server.v1_X_RY; " : ""}CraftBukkit ${c.craftBukkitPackage ?? "?"}.`,
-    ...(c.nmsDep ? [`  depend on ${c.nmsDep}${c.nmsDepLocal === false ? " (not in local ~/.m2 yet: run BuildTools)" : c.nmsDepLocal ? " (found in ~/.m2)" : ""}`] : []),
+    ...(c.nmsDep ? [`  depend on ${c.nmsDep}${c.nmsDepLocal === false ? " (not found in the local Maven repositories)" : c.nmsDepLocal ? " (found in a local Maven repository)" : ""}`] : []),
     ...(c.gradlePlugin ? [`  Gradle plugin ${c.gradlePlugin}`] : []),
     ...(c.mavenPlugin ? [`  Maven plugin ${c.mavenPlugin}`] : []),
     ...(a.platform === "bukkit" ? [] : [`  how: ${nms.howTo.replace(/\{mc\}/g, a.mcVersion)}`]),

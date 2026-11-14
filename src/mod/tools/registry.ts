@@ -8,8 +8,9 @@ import type { Services } from "../services.js";
 import * as S from "./schemas.js";
 import { guard } from "./result.js";
 import { validationTools } from '../../common/validation-tools.js';
+import { verificationTools } from '../../common/verification-tools.js';
 
-type Impl = (services: Services, args: never) => Promise<CallToolResult>;
+type Impl = (services: Services, args: never, signal?: AbortSignal) => Promise<CallToolResult>;
 interface ToolDef {
   name: string;
   title: string;
@@ -22,6 +23,7 @@ interface ToolDef {
 
 export const TOOLS: ToolDef[] = [
   ...validationTools('mod'),
+  ...verificationTools,
   {
     name: "list_versions",
     title: "List versions",
@@ -92,7 +94,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "gradle_build",
     title: "Gradle build",
-    description: "Run Gradle tasks with an auto-picked JDK; build scripts execute project code as the MCP user. Returns parsed errors (file:line), Mixin AP warnings, dependency and JVM problems. Log kept on disk.",
+    description: "Run Gradle tasks in the selected module. Build scripts execute as the MCP user. Returns failed task paths, classified compiler/dependency/JVM/Mixin diagnostics, and the full log path.",
     input: S.gradleBuildInput,
     readOnly: false,
     load: async () => (await import("./gradle.js")).gradleBuild as Impl,
@@ -130,6 +132,7 @@ export const TOOLS: ToolDef[] = [
     title: "Validate mixins",
     description: "Static mixin check against the real classes: configs and registration, targets, selectors, @At targets, handler signatures, @Local/@ModifyVariable (LVT), accessors/shadows, client-only targets. Executes the selected module's Gradle processResources task and resolves compile/runtime dependencies to verify generated loader metadata and MixinExtras; incomplete evidence is reported as a warning.",
     input: S.mixinValidateInput,
+    readOnly: false,
     load: async () => (await import("./mixin.js")).mixinValidate as Impl,
   },
   {
@@ -161,7 +164,7 @@ export function registerTools(server: McpServer, getServices: () => Services | P
     server.registerTool(
       t.name,
       { title: t.title, description: t.description, inputSchema: t.input as never, annotations: { readOnlyHint: t.readOnly ?? true, openWorldHint: t.openWorld ?? true } },
-      (async (args: never) => guard(async () => (await t.load())(await getServices(), args))) as never,
+      (async (args: never, context: { signal: AbortSignal }) => guard(async () => (await t.load())(await getServices(), args, context.signal))) as never,
     );
   }
 }

@@ -1,55 +1,27 @@
 ---
 name: minecraft-coding-tools
-description: Use MinecraftCodingTools to develop or debug Fabric, Forge, NeoForge mods and Bukkit, Spigot, Paper plugins, including Java/Kotlin, mappings, dependencies, Mixin/NMS, resource and data validation, and Minecraft asset generation with a host image tool.
+description: Develop and verify Java/Kotlin Minecraft mods for Fabric, Forge or NeoForge and plugins for Bukkit, Spigot or Paper. Use the MCP tools for version-specific APIs, dependency and JAR inspection, Mixin/NMS, builds, crash diagnosis and acceptance evidence.
 ---
 
 # MinecraftCodingTools
 
-## Routing
+Discover the connected server's tools. Wrap MCP arguments in `request` with `target: "mod"` or `target: "plugin"`. Use the exposed names `build` and `search_source`. If the MCP server is unavailable, use the project's wrappers, local files and test reports and disclose any lost coverage.
 
-- Discover the server's current tool schemas. Every call wraps arguments in `request` with `target: "mod"` or `target: "plugin"`.
-- Use exposed names `build` and `search_source`; internal names such as `gradle_build` and `search_mc_source` are aliases, not exposed tools.
-- Mod example: `get_profile({"request":{"target":"mod","mcVersion":"1.20.1","loader":"fabric"}})`.
-- Plugin example: `get_profile({"request":{"target":"plugin","mcVersion":"1.20.4","platform":"paper"}})`.
+Pass `projectDir` when inspecting dependencies or sources so MinecraftCodingTools keeps its working files under the build root's `.mct/`.
 
-## Project workflow
+1. **Discover the module.** Use `inspect_mod_project` for mods and read the build files and active descriptor for plugins. Establish the loader/platform, game and API versions, JDK, mappings, source sets and packaging task. Preserve the project's Java/Kotlin conventions and verify each changed platform or variant.
+2. **Define acceptance.** For each substantive requirement, write the expected behavior, affected components and a check that could fail if that behavior were absent. Include relevant negative cases, dedicated-server or client behavior, saved state after restart and optional dependencies. A small fix can use one acceptance check.
+3. **Resolve the API.** Use `get_profile` and `docs_search` for the actual version, then confirm signatures against the compile classpath or version-matched source. Start with `search_source` and focused `get_class` outlines. Prefer public events and registration APIs before reaching for Mixin or NMS.
+4. **Implement the entire path.** Follow each requirement from entry point through registration, permissions, state changes, persistence/networking and resources as applicable. Replace temporary scaffolding before completion. Report any accepted behavior that remains incomplete.
+5. **Verify the change.** Review edited lines with `audit_implementation`, run applicable metadata/resource/Mixin/NMS validators, and build the selected module. Run focused automated tests and inspect the produced artifact. Use `verify_requirements` to check files, JAR entries and named JUnit cases. Run the required game scenarios in an authorized development environment.
+6. **Diagnose and retest.** Start from the failing task, first actionable diagnostic and retained log. Confirm the dependency, namespace or signature before editing. Rerun the failed check after fixing its cause, then run the affected regression checks.
+7. **Review acceptance before closing.** Report the checks that ran, observed outcomes and evidence for each material requirement. Separate source review, static validation, compilation, unit/integration tests, runtime checks and manual play tests. Identify any blocked or unverified behavior.
 
-1. Establish the actual module, loader/platform, Minecraft version and namespace. For mods, call `inspect_mod_project`; for plugins, inspect build files and plugin metadata. Pass `projectDir` where supported.
-2. Use `get_profile` for version-specific build facts. Prefer public API events before Mixin or NMS.
-3. Find symbols with `search_source`. Read `get_class` outlines first, then request the relevant method or hierarchy. Use exact descriptors for overloaded methods.
-4. For existing mods, use `project_source_search` and `get_project_source` to inspect Java/Kotlin code. Preserve the existing file language; follow the detected language preference for new files.
-5. After changes, use the project's build and relevant tests. Run `mixin_validate` for changed mixins and `nms_validate` for changed NMS/CraftBukkit references. Use `analyze_crash` with a real log when execution fails.
+## References
 
-## Implementation guidance
-
-- For mod gameplay, registration, networking, sides or datagen, read [modding](references/modding.md).
-- For plugin commands, events, scheduling, PDC or configuration, read [plugin development](references/plugin-dev.md).
-- For textures, icons, concept art or release artwork requested by the user, read [image generation](references/imagegen.md). This requires the client's image tool; the MCP server does not generate images.
-
-## Static project validation
-
-- `validate_mod` (`target=mod`): Fabric JSON and Forge/NeoForge TOML descriptors, required metadata and Fabric mixin config paths.
-- `validate_plugin` (`target=plugin`): YAML descriptors, main class discovery, dependencies, api-version shape, Paper command metadata and reload calls.
-- `validate_resources`: JSON, model/blockstate/item-definition references, textures, sounds, fonts and PNG animation metadata.
-- `validate_data`: JSON, metadata, version-sensitive paths, function tag references and cycles.
-- `validate_worldgen`: local references between features, structures, pools, biome modifiers and dimensions.
-- `validate_modules`: detected mod/plugin modules, version differences, mod identity, duplicate plugin names and loader imports in common code. Stonecutter version variants are expected to differ.
-
-Shared arguments: `projectDir`, optional `mcVersion`, `roots`, `strict`, `offset`, `limit`. Pass a selected module for descriptor checks. Use `roots` to include generated resources and unpacked dependency resources. These tools execute no builds, resolve no dependencies and run no game codecs. External references are warnings when not supplied locally; static success does not prove runtime compatibility. Module checks discover projects from build files and do not evaluate Gradle.
-
-## Dependency integration
-
-1. Call `list_project_artifacts` for the relevant module.
-2. Pass the returned `jarPath` and optional `sourcesJarPath` to `inspect_code_archive`.
-3. Use `search_code_archive` for symbols; use `kind: "usages"` or `"callees"` for bytecode references inside that JAR.
-4. Read `get_code_archive_class` with `mode: "outline"`, then `mode: "source"`. Prefer original sources over decompilation.
-5. Follow returned pagination offsets. Resolve ambiguous names with fully qualified names and descriptors.
-
-## Constraints
-
-- Build and classpath resolution execute project build logic as the current user. Use them within the user's authorized project work; set `runPaperclip: true` or `buildtools: true` only when that execution is authorized.
-- Keep namespace and version consistent across calls. Use `translate_mapping` when names differ; mod `mojmap` and plugin `mojang` are distinct schema values.
-- Classpath discovery covers compile dependencies. An absent result does not prove a runtime dependency is absent.
-- Archive references are scoped to one JAR. Nested JARs and other dependencies require separate analysis. For Maven reactor modules, unresolved sibling artifacts may need the project's normal reactor build/install.
-- Kotlin parsing is static, and decompilation produces Java. Confirm JVM signatures through compilation before relying on them.
-- Report which checks actually ran. Distinguish source evidence, compilation, static validation and runtime verification.
+- [Mod development](references/modding.md) for initialization, registries, sides, networking, data and multiloader projects.
+- [Plugin development](references/plugin-dev.md) for lifecycle, commands, dependencies, persistence, schedulers and Folia.
+- [Dependency and source inspection](references/dependencies.md) for exact APIs, mappings, Mixin and NMS.
+- [Validation and acceptance](references/verification.md) for tool schemas, build diagnosis and test evidence.
+- [Runtime verification](references/runtime.md) for the Paper lifecycle smoke test and dedicated-server and client checks.
+- [Minecraft assets](references/imagegen.md) for image generation and in-game asset checks.

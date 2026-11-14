@@ -1,13 +1,13 @@
 import AdmZip from "adm-zip";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { runProcess } from "../exec/run.js";
 import { RegexMatcher } from "../../common/regex.js";
 import { grepSourceZip, searchIndexRegex, sourceCandidates } from "../../common/source-search.js";
 export { regexLiterals } from "../../common/source-search.js";
 import { ACC, ClassReader, type ClassInfo } from "./classfile.js";
+import { restrictedJavaEnv } from "../../common/restricted-env.js";
 
 export interface IndexMeta {
   formatVersion: 1;
@@ -257,7 +257,7 @@ export async function vineflowerDecompile(java: string, vfJar: string, index: Mc
 export async function vineflowerDecompileMany(java: string, vfJar: string, index: McIndex, outers: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (!outers.length) return out;
-  const tmp = await mkdtemp(path.join(os.tmpdir(), "ffn-vf-"));
+  const tmp = await mkdtemp(path.join(index.dir, "vineflower-"));
   try {
     const inDir = path.join(tmp, "in");
     const outDir = path.join(tmp, "out");
@@ -275,8 +275,9 @@ export async function vineflowerDecompileMany(java: string, vfJar: string, index
     await mkdir(outDir, { recursive: true });
     const r = await runProcess({
       command: java,
-      args: ["-Xmx1G", "-jar", vfJar, "-s", `-e=${index.meta.jar}`, inDir, outDir],
+      args: ["-Xmx1G", "-Djava.io.tmpdir=.", "-Duser.home=.", "-jar", vfJar, "-s", `-e=${index.meta.jar}`, inDir, outDir],
       cwd: tmp,
+      env: restrictedJavaEnv(java, tmp),
       timeoutMs: 180_000 + outers.length * 10_000,
       logFile: path.join(tmp, "vf.log"),
     });

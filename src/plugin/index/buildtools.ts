@@ -58,12 +58,11 @@ const running = new Map<string, Promise<string>>();
 
 /** Run BuildTools for `mc` (once at a time per version); resolves to the log file. */
 export function runBuildTools(services: Services, mc: string, opts: { remapped: boolean; onProgress?: (m: string) => void }): Promise<string> {
-  const key = `${mc}:${opts.remapped}`;
-  let p = running.get(key);
-  if (!p) {
-    p = doRun(services, mc, opts).finally(() => running.delete(key));
-    running.set(key, p);
-  }
+  const key = services.config.cacheDir;
+  const previous = running.get(key);
+  const p = (previous?.catch(() => undefined) ?? Promise.resolve()).then(() => doRun(services, mc, opts))
+    .finally(() => { if (running.get(key) === p) running.delete(key); });
+  running.set(key, p);
   return p;
 }
 
@@ -71,7 +70,7 @@ async function doRun(services: Services, mc: string, opts: { remapped: boolean; 
   if (services.config.offline) throw new Error("BuildTools needs the network (BSP_OFFLINE is set).");
   const root = path.join(services.config.cacheDir, "buildtools");
   const bad = buildToolsPathProblem(root);
-  if (bad) throw new Error(`Cannot run BuildTools here: ${bad}. Set BSP_CACHE_DIR to a plain path (e.g. C:\\bsp-cache).`);
+  if (bad) throw new Error(`Cannot run BuildTools in this workspace: ${bad}. Supply a prebuilt serverJar or use a project at a shorter plain path.`);
   if (process.platform !== "win32") {
     // on Windows BuildTools fetches PortableGit itself
     await promisify(execFile)("git", ["--version"]).catch(() => {
@@ -85,15 +84,19 @@ async function doRun(services: Services, mc: string, opts: { remapped: boolean; 
   if (!jdk) throw new Error(`BuildTools for ${mc} needs ${want}; no such JDK found. Install one or add it to BSP_JDKS.`);
   const jar = await downloadFile(ENDPOINTS.buildToolsJar, path.join(root, "BuildTools.jar"), { userAgent: services.config.userAgent, maxAgeMs: WEEK });
   const work = path.join(root, "work");
-  await mkdir(work, { recursive: true });
+  const mavenLocal = services.config.projectMavenLocal;
+  await Promise.all([mkdir(work, { recursive: true }), mkdir(mavenLocal, { recursive: true })]);
   const logFile = path.join(root, "logs", `${mc}${opts.remapped ? "-remapped" : ""}.log`);
   opts.onProgress?.(`Running BuildTools ${mc} on JDK ${jdk.major} (5–15 min; log ${logFile})…`);
   const java = javaBin(jdk.home);
   const r = await runProcess({
     command: java,
-    args: ["-Xmx2G", ...buildToolsArgs(jar, mc, path.join(root, "out", mc), opts.remapped)],
+    args: ["-Xmx2G", `-Dmaven.repo.local=${mavenLocal}`, ...buildToolsArgs(jar, mc, path.join(root, "out", mc), opts.remapped)],
     cwd: work,
-    env: { ...process.env, JAVA_HOME: jdk.home },
+    env: {
+      ...process.env, JAVA_HOME: jdk.home, MAVEN_USER_HOME: path.dirname(mavenLocal),
+      MAVEN_OPTS: [process.env.MAVEN_OPTS, `-Dmaven.repo.local=${mavenLocal}`].filter(Boolean).join(" "),
+    },
     timeoutMs: 60 * 60_000,
     logFile,
     tailLines: 30,

@@ -1,13 +1,15 @@
 import { z } from "zod";
 
-export const inspectCodeArchiveInput = {
+const archiveInput = {
+  projectDir: z.string().optional().describe("Use this project's .mct cache. Defaults to MCT_WORKSPACE_DIR or the MCP working directory."),
   jarPath: z.string().describe("Path to a local mod, plugin, or library .jar."),
   sourcesJarPath: z.string().optional().describe("Optional matching -sources.jar; otherwise it is discovered next to the binary jar."),
 };
 
+export const inspectCodeArchiveInput = archiveInput;
+
 export const searchCodeArchiveInput = {
-  jarPath: z.string().describe("Path to a local mod, plugin, or library .jar."),
-  sourcesJarPath: z.string().optional().describe("Optional matching -sources.jar."),
+  ...archiveInput,
   query: z.string().min(1).max(2048).describe("Class/member name, or /regex/ for a case-insensitive regex. kind=text searches source/decompiled code."),
   kind: z.enum(["any", "class", "method", "field", "text", "usages", "callees"]).optional().describe("Default any; text searches source/decompiled code, usages finds callers, callees lists calls/field access from bytecode."),
   limit: z.number().int().min(1).max(100).optional().describe("Matches (default 30)."),
@@ -15,8 +17,7 @@ export const searchCodeArchiveInput = {
 };
 
 export const getCodeArchiveClassInput = {
-  jarPath: z.string().describe("Path to a local mod, plugin, or library .jar."),
-  sourcesJarPath: z.string().optional().describe("Optional matching -sources.jar."),
+  ...archiveInput,
   className: z.string().describe("Fully qualified, internal, or unique simple class name."),
   mode: z.enum(["outline", "source"]).optional().describe("Default source; source uses attached sources or Vineflower decompilation."),
   offset: z.number().int().min(0).max(1e6).optional().describe("Source line offset."),

@@ -2,7 +2,11 @@
 
 Use the project's exact loader, Minecraft version and mappings from `inspect_mod_project` and `get_profile`. Resolve version-sensitive APIs through `docs_search` and real source instead of using fixed dependency pins or templates from another release. Keep Forge and NeoForge packages, event buses and metadata distinct.
 
+Trace initialization from the real loader entrypoint to each new registry and listener. For Forge/NeoForge, verify which bus owns the event and where deferred registrations are attached. For Fabric, check the relevant entrypoint key, environment and language adapter. Include generated descriptors, mixin configs and access wideners when reviewing the final artifact. Use `project_source_search` and `get_project_source` to find existing wiring.
+
 Keep client renderers, screens and client initializers out of dedicated-server class loading. A logical-side condition does not protect a class that already imports client-only code. Keep authoritative gameplay on the logical server; validate incoming network payloads and schedule world changes on its thread.
+
+Trace network payload registration and handling on each side. Define when state syncs on login, tracking, mutation and world/dimension change as applicable. Verify save and load with a restart and check existing saves retain compatible defaults or migrations.
 
 When adding a block or item, update registration, item/block models, blockstates, textures, translations, recipes, tags and loot as applicable. Use the target version's item definitions and data directory conventions. Prefer the project's existing datagen providers and inspect generated output before validating resources/data. Include generated resource directories in `roots`.
 

@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stateDir } from "../common/project-state.js";
 
 /** Root of the installed FFN package (contains profiles/). */
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -9,12 +10,6 @@ function defaultConfigHome(): string {
   if (process.platform === "win32") return process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
   if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support");
   return process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config");
-}
-
-function defaultCacheHome(): string {
-  if (process.platform === "win32") return process.env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Caches");
-  return process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
 }
 
 export interface FfnConfig {
@@ -30,12 +25,12 @@ export interface FfnConfig {
   userAgent: string;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): FfnConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env, projectRoot?: string): FfnConfig {
   const ttlMin = Number(env.FFN_CACHE_TTL_MINUTES ?? "360");
   return {
     builtinProfilesDir: path.join(PACKAGE_ROOT, "profiles", "mod"),
     userProfilesDir: env.FFN_PROFILES_DIR ?? path.join(defaultConfigHome(), "ffn", "profiles"),
-    cacheDir: env.FFN_CACHE_DIR ?? path.join(defaultCacheHome(), "ffn"),
+    cacheDir: (!projectRoot && env.FFN_CACHE_DIR) || path.join(stateDir(projectRoot ?? env.MCT_WORKSPACE_DIR ?? process.cwd()), "mod"),
     cacheTtlMs: (Number.isFinite(ttlMin) && ttlMin >= 0 ? ttlMin : 360) * 60_000,
     offline: env.FFN_OFFLINE === "1" || env.FFN_OFFLINE === "true",
     // Some hosts (e.g. maven.minecraftforge.net) reject generic/blank user agents.

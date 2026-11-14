@@ -1,4 +1,5 @@
 import { z } from "zod";
+import path from "node:path";
 import { RegexMatcher } from "./regex.js";
 import { searchSourceText } from "./source-search.js";
 import { fail, ok, okText, page } from "./result.js";
@@ -11,6 +12,7 @@ type ReadClass = z.infer<z.ZodObject<typeof getCodeArchiveClassInput>>;
 type Kind = "any" | "class" | "method" | "field";
 
 export interface CodeArchiveIndex {
+  dir: string;
   meta: { jar: string; sourcesJar?: string; classCount: number; namespace: string };
   classes: Map<string, { n: string; a: number; f: [string, string, number][]; m: [string, string, number][] }>;
   resolve(name: string): string[];
@@ -32,6 +34,7 @@ export interface CodeArchiveAdapter<I extends CodeArchiveIndex> {
 }
 
 const dotted = (name: string) => name.replace(/\//g, ".");
+const archivePath = (projectDir: string | undefined, file: string) => projectDir ? path.resolve(projectDir, file) : file;
 const PRIMITIVES: Record<string, string> = { V: "void", Z: "boolean", B: "byte", C: "char", S: "short", I: "int", J: "long", F: "float", D: "double" };
 function typeAt(desc: string, at: number): { type: string; next: number } {
   let arrays = 0;
@@ -59,18 +62,18 @@ function accessLabel(access: number): string {
 }
 
 export async function inspectCodeArchive<I extends CodeArchiveIndex>(a: Inspect, adapter: CodeArchiveAdapter<I>) {
-  const { summary, index } = await adapter.open(a.jarPath, a.sourcesJarPath);
+  const { summary, index } = await adapter.open(archivePath(a.projectDir, a.jarPath), a.sourcesJarPath && archivePath(a.projectDir, a.sourcesJarPath));
   const packages = new Map<string, number>();
   for (const name of index.classes.keys()) {
     const pkg = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "(root)";
     packages.set(pkg, (packages.get(pkg) ?? 0) + 1);
   }
   const popular = [...packages].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).slice(0, 25).map(([name, count]) => ({ package: dotted(name), classes: count }));
-  return ok(`Indexed ${summary.file}: ${summary.classCount} classes across ${summary.packageCount} packages.${summary.sourcesJar ? ` Sources: ${summary.sourcesJar}.` : " No sources jar found; Vineflower can decompile classes on demand."}`, { ...summary, packages: popular });
+  return ok(`Indexed ${summary.file}: ${summary.classCount} classes across ${summary.packageCount} packages.${summary.sourcesJar ? ` Sources: ${summary.sourcesJar}.` : " No sources jar found; Vineflower can decompile classes on demand."}`, { ...summary, indexDir: index.dir, packages: popular });
 }
 
 export async function searchCodeArchive<I extends CodeArchiveIndex>(a: Search, adapter: CodeArchiveAdapter<I>) {
-  const { index, summary } = await adapter.open(a.jarPath, a.sourcesJarPath);
+  const { index, summary } = await adapter.open(archivePath(a.projectDir, a.jarPath), a.sourcesJarPath && archivePath(a.projectDir, a.sourcesJarPath));
   const limit = a.limit ?? 30;
   const offset = a.offset ?? 0;
   if (a.kind === "usages" || a.kind === "callees") {
@@ -129,7 +132,7 @@ export async function searchCodeArchive<I extends CodeArchiveIndex>(a: Search, a
 }
 
 export async function getCodeArchiveClass<I extends CodeArchiveIndex>(a: ReadClass, adapter: CodeArchiveAdapter<I>) {
-  const { index, summary } = await adapter.open(a.jarPath, a.sourcesJarPath);
+  const { index, summary } = await adapter.open(archivePath(a.projectDir, a.jarPath), a.sourcesJarPath && archivePath(a.projectDir, a.sourcesJarPath));
   const found = index.resolve(a.className);
   if (found.length !== 1) return fail(found.length ? `Class name is ambiguous: ${found.map(dotted).join(", ")}. Use a fully qualified name.` : `Class ${a.className} not found in ${summary.file}.`);
   const name = found[0]!;

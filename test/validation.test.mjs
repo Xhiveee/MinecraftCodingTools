@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import AdmZip from 'adm-zip';
 import { validate } from '../dist/common/validation.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -77,6 +78,45 @@ test('mod descriptors use real TOML parsing and check Fabric mixin registration'
   assert.ok(data(await validate('mod', { projectDir: root })).findings.some(f => f.message.includes('Invalid TOML')));
   await put('src/main/resources/fabric.mod.json', { schemaVersion: 1, id: 'demo', version: '1', mixins: ['demo.mixins.json'] });
   assert.ok(data(await validate('mod', { projectDir: root })).findings.some(f => f.message.includes('Missing mixin')));
+}));
+
+test('NeoForge descriptor selection and loaderVersion follow the target version', async () => fixture(async (root, put) => {
+  await put('build.gradle.kts', 'plugins { id("net.neoforged.moddev") }');
+  await put('gradle.properties', 'minecraft_version=1.20.4');
+  const descriptor = 'modLoader="javafml"\nlicense="MIT"\n[[mods]]\nmodId="demo"\nversion="1"\n';
+  await put('legacy/META-INF/mods.toml', 'loaderVersion="[1,)"\n' + descriptor);
+  const legacy = data(await validate('mod', { projectDir: root, roots: ['legacy'], mcVersion: '1.20.4' }));
+  assert.equal(legacy.errors, 0);
+  assert.equal(legacy.warnings, 0);
+  await put('recent/META-INF/neoforge.mods.toml', descriptor + '[[mixins]]\nconfig="demo.mixins.json"');
+  const modern = data(await validate('mod', { projectDir: root, roots: ['recent'], mcVersion: '1.21.11' }));
+  assert.equal(modern.errors, 1);
+  assert.match(modern.findings[0].message, /Missing mixin config/);
+  const older = data(await validate('mod', { projectDir: root, roots: ['recent'], mcVersion: '1.21.1' }));
+  assert.ok(older.findings.some(f => f.message.includes('loaderVersion')));
+}));
+
+test('built plugin validation checks packaged classes and Paper dependency fields', async () => fixture(async root => {
+  const jar = new AdmZip();
+  const writeJar = () => writeFile(path.join(root, 'plugin.jar'), jar.toBuffer());
+  jar.addFile('paper-plugin.yml', Buffer.from(`name: Demo
+version: '1'
+main: demo.Main
+bootstrapper: demo.Bootstrap
+api-version: '1.21'
+dependencies:
+  server:
+    API:
+      required: 'true'
+      load: SOMETIMES
+`));
+  jar.addFile('demo/Main.class', Buffer.from('fixture entry'));
+  await writeJar();
+  const validateJar = async () => data(await validate('plugin', { projectDir: root, jarPath: 'plugin.jar' }));
+  assert.match((await validateJar()).findings[0].message, /bootstrapper.*absent/);
+  jar.addFile('demo/Bootstrap.class', Buffer.from('fixture entry'));
+  await writeJar();
+  assert.equal((await validateJar()).errors, 2);
 }));
 
 test('module checks detect loader imports in common', async () => fixture(async (root, put) => {

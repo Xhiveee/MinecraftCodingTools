@@ -9,6 +9,7 @@ import { fail, ok } from "./result.js";
 import { gradleWrapper, mavenCandidates, requiredJvm, wrapperGradleVersion } from "./build.js";
 import { discoverJdks, pickJdk } from "../jdk/discover.js";
 import { listProjectArtifactsInput } from "./schemas.js";
+import { gradleState, mavenState } from "../../common/project-state.js";
 
 type A = z.infer<z.ZodObject<typeof listProjectArtifactsInput>>;
 const CLASSPATH_INIT = `allprojects { p ->
@@ -54,7 +55,8 @@ export async function listProjectArtifacts(services: Services, a: A) {
     if (!existsSync(wrapper)) return fail(`No Gradle wrapper in ${root}; add gradlew before resolving the compile classpath.`);
     const init = path.join(work, "classpath.init.gradle");
     await writeFile(init, CLASSPATH_INIT, "utf8");
-    const result = await runProcess({ command: wrapper, args: ["bspPrintCompileClasspath", "--init-script", init, "--no-configuration-cache", "--console=plain", ...(services.config.offline ? ["--offline"] : [])], cwd: root, env: javaEnv, timeoutMs: 20 * 60_000, logFile, tailLines: 80 });
+    const storage = await gradleState(root, javaEnv);
+    const result = await runProcess({ command: wrapper, args: [...storage.args, "bspPrintCompileClasspath", "--init-script", init, "--no-configuration-cache", "--console=plain", ...(services.config.offline ? ["--offline"] : [])], cwd: root, env: storage.env, timeoutMs: 20 * 60_000, logFile, tailLines: 80 });
     if (result.exitCode !== 0 || result.timedOut) return fail(`Gradle classpath resolution ${result.timedOut ? "timed out" : `failed (exit ${result.exitCode})`}. Log: ${logFile}\n${result.tail.slice(-12).join("\n")}`);
     const log = await readFile(logFile, "utf8");
     const { realpathSync } = await import("node:fs");
@@ -70,7 +72,8 @@ export async function listProjectArtifacts(services: Services, a: A) {
     const output = path.join(work, `maven-classpath-${process.pid}-${Date.now()}.txt`);
     await rm(output, { force: true });
     try {
-    const result = await runProcess({ command, args: ["-B", "-ntp", ...(services.config.offline ? ["-o"] : []), "-f", path.join(info.dir, "pom.xml"), "org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath", "-DincludeScope=compile", `-Dmdep.outputFile=${output}`], cwd: root, env: javaEnv, timeoutMs: 20 * 60_000, logFile, tailLines: 80 });
+    const storage = await mavenState(root, javaEnv);
+    const result = await runProcess({ command, args: [...storage.args, "-B", "-ntp", ...(services.config.offline ? ["-o"] : []), "-f", path.join(info.dir, "pom.xml"), "org.apache.maven.plugins:maven-dependency-plugin:3.8.1:build-classpath", "-DincludeScope=compile", `-Dmdep.outputFile=${output}`], cwd: root, env: storage.env, timeoutMs: 20 * 60_000, logFile, tailLines: 80 });
     if (result.exitCode !== 0 || result.timedOut) return fail(`Maven classpath resolution ${result.timedOut ? "timed out" : `failed (exit ${result.exitCode})`}. The dependency plugin may need to be downloaded. Log: ${logFile}\n${result.tail.slice(-12).join("\n")}`);
     const classpath = await readFile(output, "utf8").catch(() => "");
     if (!existsSync(output)) return fail(`Maven completed but produced no classpath file. Log: ${logFile}`);
